@@ -10,9 +10,11 @@ use PHPUnit\Framework\TestCase;
 |--------------------------------------------------------------------------
 |
 | This file is automatically loaded before any test files.
-| You can define global helpers, shared setup, datasets, etc.
+| It defines global setup, helpers, and ensures all tests in the
+| 'tests/Unit' directory automatically extend PHPUnit TestCase.
 |
-| All tests under `tests/Unit` will automatically use PHPUnit's TestCase.
+| You don't need namespaces or manual TestCase inheritance inside
+| individual Pest test files.
 |
 */
 
@@ -20,13 +22,13 @@ uses(TestCase::class)->in('Unit');
 
 /*
 |--------------------------------------------------------------------------
-| Optional Global Helpers (if needed)
+| Global Helper Functions (Optional)
 |--------------------------------------------------------------------------
 |
-| You can define simple global helper functions for assertions or mocks.
-| For example:
+| You can define global functions here for convenience in tests.
+| Example:
 |
-| function fakeWrapValue($value): \Tetthys\Wrap\Wrap {
+| function wrap_ok(mixed $value): \Tetthys\Wrap\Wrap {
 |     return \Tetthys\Wrap\Wrap::handle(fn() => $value);
 | }
 |

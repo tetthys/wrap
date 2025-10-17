@@ -8,12 +8,17 @@ services:
     working_dir: /workspace
     environment:
       COMPOSER_ALLOW_SUPERUSER: "1"
+      COMPOSER_ROOT_VERSION: "dev-main"
     volumes:
       - .:/workspace
-    # Install dependencies and run Pest tests
+    # Always test a specific file directly
     command: >
-      sh -c "
-        set -e &&
-        composer install --no-interaction --prefer-dist &&
-        ./vendor/bin/pest
+      sh -lc "
+        set -euo pipefail &&
+        git config --global --add safe.directory /workspace &&
+        composer install --no-interaction --prefer-dist --ansi &&
+        if [ ! -f vendor/bin/pest ]; then
+          composer require --dev pestphp/pest:^3 pestphp/pest-plugin-expectations:^3 --no-interaction --prefer-dist --ansi;
+        fi &&
+        ./vendor/bin/pest --colors=always -vv tests/Unit/WrapTest.php
       "
