@@ -10,22 +10,18 @@ use Throwable;
 /**
  * Minimal fluent Result-like wrapper with functional map/filter/reduce.
  *
- * Example:
- * ```php
- * $sum = Wrap::handle(fn() => [1, 2, 3, 4, 5])
- *     ->filter(fn($v) => $v % 2 === 0)
- *     ->map(fn($v) => $v ** 2)
- *     ->reduce(fn($acc, $v) => $acc + $v, 0)
- *     ->getValueOr(0); // 20
- * ```
- *
  * @template TSuccess
  * @template TError of Throwable
  */
 final class Wrap
 {
+    /** Whether the operation succeeded. */
     private bool $ok = false;
+
+    /** Captured exception on failure. */
     private ?Throwable $error = null;
+
+    /** Stored value (any type). */
     private mixed $value = null;
 
     /**
@@ -47,7 +43,7 @@ final class Wrap
         return $self;
     }
 
-    /** Side-effect on success */
+    /** Run side-effect only when successful. */
     public function ok(callable $callback): self
     {
         if ($this->ok) {
@@ -56,7 +52,7 @@ final class Wrap
         return $this;
     }
 
-    /** Side-effect on failure */
+    /** Run side-effect only when failed. */
     public function fail(callable $callback): self
     {
         if (!$this->ok && $this->error) {
@@ -65,24 +61,38 @@ final class Wrap
         return $this;
     }
 
-    /** Fallback value factory on failure */
+    /**
+     * Provide a fallback value on failure.
+     * Also flips the state to success so that subsequent chains run.
+     */
     public function rescue(callable $callback): self
     {
         if (!$this->ok && $this->error) {
             $this->value = $callback($this->error);
+            $this->ok = true; // 🔧 make chain continue after rescue
+            $this->error = null; // clear previous error
         }
         return $this;
     }
 
-    /** Always run (finally) */
+    /** Always run (finally-style). */
     public function always(callable $callback): void
     {
         $callback($this->ok, $this->error, $this->value);
     }
 
-    public function isOk(): bool { return $this->ok; }
-    public function getError(): ?Throwable { return $this->error; }
-    public function getValue(): mixed { return $this->value; }
+    public function isOk(): bool
+    {
+        return $this->ok;
+    }
+    public function getError(): ?Throwable
+    {
+        return $this->error;
+    }
+    public function getValue(): mixed
+    {
+        return $this->value;
+    }
 
     /**
      * Return value or default when failed/null.
@@ -97,14 +107,23 @@ final class Wrap
     }
 
     // -----------------------------------------------------
-    // Functional core: map / filter / reduce
+    // Functional core
     // -----------------------------------------------------
 
-    /** @param callable(mixed, mixed=): mixed $mapper */
+    /**
+     * Transform each element when the current value is iterable.
+     * (kept for array/collection pipelines)
+     *
+     * @param callable(mixed, mixed=): mixed $mapper
+     */
     public function map(callable $mapper): self
     {
-        if (!$this->ok) return $this;
-        if (!is_iterable($this->value)) return $this->invalidate('Wrap::map requires iterable value');
+        if (!$this->ok) {
+            return $this;
+        }
+        if (!is_iterable($this->value)) {
+            return $this->invalidate("Wrap::map requires iterable value");
+        }
 
         $result = [];
         foreach ($this->value as $k => $v) {
@@ -114,11 +133,39 @@ final class Wrap
         return $this;
     }
 
-    /** @param callable(mixed, mixed=): bool $predicate */
+    /**
+     * Transform the stored (scalar or any) value when successful.
+     * This matches the README’s fluent examples (alias of “map” conceptually,
+     * but does not require an iterable).
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TNext, TError>
+     */
+    public function then(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        /** @var self<TNext, TError> $this */
+        $this->value = $callback($this->value);
+        return $this;
+    }
+
+    /**
+     * Keep items that satisfy the predicate (iterables only).
+     *
+     * @param callable(mixed, mixed=): bool $predicate
+     */
     public function filter(callable $predicate): self
     {
-        if (!$this->ok) return $this;
-        if (!is_iterable($this->value)) return $this->invalidate('Wrap::filter requires iterable value');
+        if (!$this->ok) {
+            return $this;
+        }
+        if (!is_iterable($this->value)) {
+            return $this->invalidate("Wrap::filter requires iterable value");
+        }
 
         $result = [];
         foreach ($this->value as $k => $v) {
@@ -131,6 +178,8 @@ final class Wrap
     }
 
     /**
+     * Reduce an iterable into a single accumulator.
+     *
      * @template TAcc
      * @param callable(TAcc, mixed, mixed=): TAcc $reducer
      * @param TAcc $initial
@@ -138,8 +187,12 @@ final class Wrap
      */
     public function reduce(callable $reducer, mixed $initial): self
     {
-        if (!$this->ok) return $this;
-        if (!is_iterable($this->value)) return $this->invalidate('Wrap::reduce requires iterable value');
+        if (!$this->ok) {
+            return $this;
+        }
+        if (!is_iterable($this->value)) {
+            return $this->invalidate("Wrap::reduce requires iterable value");
+        }
 
         $acc = $initial;
         foreach ($this->value as $k => $v) {
@@ -151,6 +204,7 @@ final class Wrap
         return $this;
     }
 
+    /** Flip to failed state with a standardized InvalidArgumentException. */
     private function invalidate(string $message): self
     {
         $this->ok = false;
