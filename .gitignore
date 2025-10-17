@@ -1,0 +1,32 @@
+# Composer dependencies
+/vendor/
+
+# Composer lock (optional for libraries)
+composer.lock
+
+# IDE / Editor
+.idea/
+.vscode/
+*.iml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# PHPUnit / Pest cache
+.phpunit.result.cache
+/.phpunit.cache/
+
+# Build artifacts / coverage
+/build/
+coverage.xml
+clover.xml
+*.coverage
+*.cache
+
+# Logs
+*.log
+
+# Docker
+/.env
+/.env.local
