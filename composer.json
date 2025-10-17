@@ -3,11 +3,11 @@
   "description": "Minimal Result-like wrapper with map/filter/reduce for iterable values (PHP 8.3+).",
   "type": "library",
   "license": "MIT",
-  "version": "0.0.2",
   "autoload": {
     "psr-4": {
-      "Tetthys\\\\Wrap\\\\": "src/"
-    }
+      "Tetthys\\Wrap\\": "src/"
+    },
+    "files": ["helpers.php"]
   },
   "require": {
     "php": "^8.3"
@@ -22,5 +22,7 @@
     "allow-plugins": {
       "pestphp/pest-plugin": true
     }
-  }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
 }
