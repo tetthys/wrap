@@ -6,8 +6,7 @@
   "autoload": {
     "psr-4": {
       "Tetthys\\Wrap\\": "src/"
-    },
-    "files": ["helpers.php"]
+    }
   },
   "require": {
     "php": "^8.3"
@@ -22,7 +21,5 @@
     "allow-plugins": {
       "pestphp/pest-plugin": true
     }
-  },
-  "minimum-stability": "dev",
-  "prefer-stable": true
+  }
 }
