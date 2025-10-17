@@ -1,4 +1,4 @@
-# Tetthys / Wrap
+# Wrap
 
 > Minimal Result-like wrapper with map/filter/reduce for iterable values (PHP 8.3+).
 
@@ -12,81 +12,145 @@ composer require tetthys/wrap
 
 ---
 
-## Basic Usage
-
-`Wrap` safely executes a callback and lets you handle success, failure, and transformation fluently — without `try/catch`.
+## Basic Example
 
 ```php
-use Tetthys\Wrap\Wrap;
+use App\Utils\Wrap;
 
-$result = Wrap::handle(fn() => 1 / 0)
-    ->fail(fn($e) => \Log::error($e->getMessage()))
+$result = Wrap::handle(fn() => riskyOperation())
+    ->ok(fn($v) => Log::info("Success: {$v}"))
+    ->fail(fn($e) => Log::error($e->getMessage()))
     ->rescue(fn() => 42)
+    ->map(fn($v) => $v * 2)
+    ->then(fn($v) => $v + 1)
+    ->always(fn($ok, $err, $val) => Log::debug('Done'))
     ->getValueOr(0);
 
-echo $result; // 42
+echo $result; // e.g. 85
 ```
 
 ---
 
-## Functional Example
+## Method Usage
 
-You can safely map, filter, and reduce iterable values.
+### `Wrap::handle(callable $callback)`
+
+Safely execute a callable and wrap its result or exception.
 
 ```php
-use Tetthys\Wrap\Wrap;
-
-$sum = Wrap::handle(fn() => [1, 2, 3, 4, 5])
-    ->filter(fn($v) => $v % 2 === 0)
-    ->map(fn($v) => $v ** 2)
-    ->reduce(fn($acc, $v) => $acc + $v, 0)
-    ->getValueOr(0);
-
-echo $sum; // 20
+$wrap = Wrap::handle(fn() => 1 / 0);
 ```
 
 ---
 
-## Helper Function
+### `ok(fn($value))`
 
-This package also provides a global helper `wrap()` for quick use.
+Run only if successful (side effect only).
 
 ```php
-$value = wrap(fn() => 1 / 0)
+->ok(fn($v) => Log::info("Value: {$v}"));
+```
+
+---
+
+### `fail(fn($error))`
+
+Run only on failure (for logging or alerts).
+
+```php
+->fail(fn($e) => Log::error($e->getMessage()));
+```
+
+---
+
+### `rescue(fn($error))`
+
+Provide a fallback value when an error occurs.
+
+```php
+->rescue(fn() => 'default value');
+```
+
+---
+
+### `map(fn($value))`
+
+Transform the stored value if successful.
+
+```php
+->map(fn($v) => $v * 2);
+```
+
+---
+
+### `then(fn($value))`
+
+Alias of `map()` for fluent, chain-style transformations.
+
+```php
+->then(fn($v) => $v + 1);
+```
+
+---
+
+### `always(fn($ok, $error, $value))`
+
+Always runs, like `finally`.
+
+```php
+->always(fn($ok, $err, $val) => Log::debug('Finished', compact('ok', 'err')));
+```
+
+---
+
+### `isOk()`
+
+Check whether the operation succeeded.
+
+```php
+if ($wrap->isOk()) echo "All good!";
+```
+
+---
+
+### `getError()`
+
+Retrieve the captured exception, or `null` if success.
+
+```php
+$error = $wrap->getError();
+```
+
+---
+
+### `getValue()`
+
+Get the current stored value (may be `null` if failed).
+
+```php
+$value = $wrap->getValue();
+```
+
+---
+
+### `getValueOr($default)`
+
+Return the stored value or a fallback default.
+
+```php
+$value = $wrap->getValueOr(0);
+```
+
+---
+
+## Helper Function (optional)
+
+If registered via Composer autoload (`src/helpers.php`):
+
+```php
+$value = wrap(fn() => riskyOperation())
     ->rescue(fn() => 42)
-    ->getValueOr(0); // 42
-```
-
-> You may need to run `composer dump-autoload` after installation.
-
----
-
-## API Overview
-
-| Method                               | Description                          |
-| ------------------------------------ | ------------------------------------ |
-| `Wrap::handle(callable)`             | Execute safely, store value or error |
-| `ok(fn($value))`                     | Run only when success                |
-| `fail(fn($error))`                   | Run only when failure                |
-| `rescue(fn($error))`                 | Replace failed value with fallback   |
-| `always(fn($ok, $error, $value))`    | Always run (like finally)            |
-| `map(fn($v, $k))`                    | Transform iterable items             |
-| `filter(fn($v, $k))`                 | Filter iterable items                |
-| `reduce(fn($acc, $v, $k), $initial)` | Reduce iterable                      |
-| `getValueOr($default)`               | Get value or default                 |
-
-> **Note**
-> `map`, `filter`, and `reduce` only work with iterable values.
-> If the wrapped value is not iterable, the instance automatically transitions into a failed state with an `InvalidArgumentException`.
-
----
-
-## Example Integration
-
-```php
-return Wrap::handle(fn() => $this->withdraw($amount))
-    ->fail(fn($e) => Log::error('Withdrawal failed', ['msg' => $e->getMessage()]))
-    ->rescue(fn() => $this->rollback());
+    ->getValueOr(0);
 ```
 
 ---
