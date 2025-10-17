@@ -8,22 +8,22 @@
 
 ```bash
 composer require tetthys/wrap
-````
+```
 
 ---
 
 ## Basic Example
 
 ```php
-use App\Utils\Wrap;
+use Tetthys\Wrap\Wrap;
 
 $result = Wrap::handle(fn() => riskyOperation())
-    ->ok(fn($v) => Log::info("Success: {$v}"))
-    ->fail(fn($e) => Log::error($e->getMessage()))
+    ->ok(fn($v) => \Log::info("Success: {$v}"))
+    ->fail(fn($e) => \Log::error($e->getMessage()))
     ->rescue(fn() => 42)
     ->map(fn($v) => $v * 2)
     ->then(fn($v) => $v + 1)
-    ->always(fn($ok, $err, $val) => Log::debug('Done'))
+    ->always(fn($ok, $err, $val) => \Log::debug('Done'))
     ->getValueOr(0);
 
 echo $result; // e.g. 85
@@ -48,7 +48,7 @@ $wrap = Wrap::handle(fn() => 1 / 0);
 Run only if successful (side effect only).
 
 ```php
-->ok(fn($v) => Log::info("Value: {$v}"));
+->ok(fn($v) => \Log::info("Value: {$v}"));
 ```
 
 ---
@@ -58,7 +58,7 @@ Run only if successful (side effect only).
 Run only on failure (for logging or alerts).
 
 ```php
-->fail(fn($e) => Log::error($e->getMessage()));
+->fail(fn($e) => \Log::error($e->getMessage()));
 ```
 
 ---
@@ -98,7 +98,7 @@ Alias of `map()` for fluent, chain-style transformations.
 Always runs, like `finally`.
 
 ```php
-->always(fn($ok, $err, $val) => Log::debug('Finished', compact('ok', 'err')));
+->always(fn($ok, $err, $val) => \Log::debug('Finished', compact('ok', 'err')));
 ```
 
 ---
@@ -143,12 +143,56 @@ $value = $wrap->getValueOr(0);
 
 ---
 
-## Helper Function (optional)
+## Optional: Define your own `wrap()` helper in project root
 
-If registered via Composer autoload (`src/helpers.php`):
+You can define a global helper at your **project root** (e.g., `helpers.php`) and autoload it via Composer.
+
+**1) Create `helpers.php` at project root:**
 
 ```php
-$value = wrap(fn() => riskyOperation())
+<?php
+
+declare(strict_types=1);
+
+use Tetthys\Wrap\Wrap;
+use Throwable;
+
+if (!function_exists('wrap')) {
+    /**
+     * Wrap a callback execution with Tetthys\Wrap\Wrap.
+     *
+     * @template TResult
+     * @param callable(): TResult $callback
+     * @return Wrap<TResult, Throwable>
+     */
+    function wrap(callable $callback): Wrap
+    {
+        /** @var Wrap<TResult, Throwable> */
+        return Wrap::handle($callback);
+    }
+}
+```
+
+**2) Register it in `composer.json`:**
+
+```json
+{
+  "autoload": {
+    "files": ["helpers.php"]
+  }
+}
+```
+
+Then run:
+
+```bash
+composer dump-autoload
+```
+
+**3) Use it anywhere:**
+
+```php
+$result = wrap(fn() => riskyOperation())
     ->rescue(fn() => 42)
     ->getValueOr(0);
 ```
