@@ -1,0 +1,19 @@
+services:
+  php:
+    build:
+      context: .
+      dockerfile: dockerimages/phptestenv/Dockerfile
+    image: dockerimages/phptestenv:php8.3
+    container_name: tetthys-wrap-test
+    working_dir: /workspace
+    environment:
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    volumes:
+      - .:/workspace
+    # Install dependencies and run Pest tests
+    command: >
+      sh -c "
+        set -e &&
+        composer install --no-interaction --prefer-dist &&
+        ./vendor/bin/pest
+      "
