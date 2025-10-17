@@ -154,21 +154,18 @@ You can define a global helper at your **project root** (e.g., `helpers.php`) an
 
 declare(strict_types=1);
 
-use Tetthys\Wrap\Wrap;
-use Throwable;
-
 if (!function_exists('wrap')) {
     /**
-     * Wrap a callback execution with Tetthys\Wrap\Wrap.
+     * Wrap a callback execution with \Tetthys\Wrap\Wrap.
      *
      * @template TResult
      * @param callable(): TResult $callback
-     * @return Wrap<TResult, Throwable>
+     * @return \Tetthys\Wrap\Wrap<TResult, \Throwable>
      */
-    function wrap(callable $callback): Wrap
+    function wrap(callable $callback): \Tetthys\Wrap\Wrap
     {
-        /** @var Wrap<TResult, Throwable> */
-        return Wrap::handle($callback);
+        /** @var \Tetthys\Wrap\Wrap<TResult, \Throwable> */
+        return \Tetthys\Wrap\Wrap::handle($callback);
     }
 }
 ```
