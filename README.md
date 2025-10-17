@@ -31,7 +31,7 @@ echo $result; // 42
 
 ## Functional Example
 
-You can map, filter, and reduce values in a safe chain.
+You can safely map, filter, and reduce iterable values.
 
 ```php
 use Tetthys\Wrap\Wrap;
@@ -47,7 +47,21 @@ echo $sum; // 20
 
 ---
 
-## Available Methods
+## Helper Function
+
+This package also provides a global helper `wrap()` for quick use.
+
+```php
+$value = wrap(fn() => 1 / 0)
+    ->rescue(fn() => 42)
+    ->getValueOr(0); // 42
+```
+
+> You may need to run `composer dump-autoload` after installation.
+
+---
+
+## API Overview
 
 | Method                               | Description                          |
 | ------------------------------------ | ------------------------------------ |
@@ -60,6 +74,10 @@ echo $sum; // 20
 | `filter(fn($v, $k))`                 | Filter iterable items                |
 | `reduce(fn($acc, $v, $k), $initial)` | Reduce iterable                      |
 | `getValueOr($default)`               | Get value or default                 |
+
+> **Note**
+> `map`, `filter`, and `reduce` only work with iterable values.
+> If the wrapped value is not iterable, the instance automatically transitions into a failed state with an `InvalidArgumentException`.
 
 ---
 
