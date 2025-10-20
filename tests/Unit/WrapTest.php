@@ -13,10 +13,12 @@ use RuntimeException;
 uses()->group("unit");
 
 /**
- * handle(): success path
+ * --------------------------------------------------------------------------
+ * Construction: handle(), fromValue(), fromError()
+ * --------------------------------------------------------------------------
  */
-describe("Wrap::handle success", function () {
-    it("sets ok=true and stores value", function () {
+describe("construction", function () {
+    it("Wrap::handle success stores value and sets ok=true", function () {
         $wrap = Wrap::handle(fn() => 42);
 
         expect($wrap->isOk())
@@ -28,7 +30,7 @@ describe("Wrap::handle success", function () {
     });
 
     it(
-        "supports null return; getValueOr returns default when value is null",
+        "Wrap::handle supports null; getValueOr returns default when null",
         function () {
             $wrap = Wrap::handle(fn() => null);
 
@@ -40,13 +42,8 @@ describe("Wrap::handle success", function () {
                 ->toBe("fallback");
         },
     );
-});
 
-/**
- * handle(): failure path
- */
-describe("Wrap::handle failure", function () {
-    it("captures thrown exception and sets ok=false", function () {
+    it("Wrap::handle failure captures exception and sets ok=false", function () {
         $wrap = Wrap::handle(function () {
             throw new RuntimeException("boom");
         });
@@ -58,23 +55,46 @@ describe("Wrap::handle failure", function () {
             ->and($wrap->getValue())
             ->toBeNull();
     });
+
+    it("Wrap::fromValue creates success state with provided value", function () {
+        $wrap = Wrap::fromValue(["a" => 1]);
+
+        expect($wrap->isOk())
+            ->toBeTrue()
+            ->and($wrap->getError())
+            ->toBeNull()
+            ->and($wrap->getValue())
+            ->toBe(["a" => 1]);
+    });
+
+    it("Wrap::fromError creates failed state with provided error", function () {
+        $err = new RuntimeException("x");
+        $wrap = Wrap::fromError($err);
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBe($err)
+            ->and($wrap->getValue())
+            ->toBeNull();
+    });
 });
 
 /**
+ * --------------------------------------------------------------------------
  * ok() / fail() side effects
+ * --------------------------------------------------------------------------
  */
-describe("ok() and fail() callbacks", function () {
+describe("ok() and fail()", function () {
     it("ok() runs only on success", function () {
         $called = false;
 
         Wrap::handle(fn() => 10)
             ->ok(function ($v) use (&$called) {
-                // should be invoked with value 10
                 $called = $v === 10;
             })
             ->fail(function () {
-                // should not be called
-                throw new RuntimeException("fail() should not run on success");
+                throw new RuntimeException("should not run on success");
             });
 
         expect($called)->toBeTrue();
@@ -90,8 +110,7 @@ describe("ok() and fail() callbacks", function () {
                 $called = $e instanceof RuntimeException;
             })
             ->ok(function () {
-                // should not be called
-                throw new RuntimeException("ok() should not run on failure");
+                throw new RuntimeException("should not run on failure");
             });
 
         expect($called)->toBeTrue();
@@ -101,7 +120,7 @@ describe("ok() and fail() callbacks", function () {
         $okCount = 0;
         $failCount = 0;
 
-        // Case 1: success -> ok called once; fail never
+        // Case 1: success -> ok once; fail never
         Wrap::handle(fn() => 1)
             ->fail(function () use (&$failCount) {
                 $failCount++;
@@ -115,11 +134,10 @@ describe("ok() and fail() callbacks", function () {
 
         expect($okCount)->toBe(1)->and($failCount)->toBe(0);
 
-        // Reset counters
+        // Case 2: failure -> fail twice; ok never
         $okCount = 0;
         $failCount = 0;
 
-        // Case 2: failure -> fail called twice; ok never
         Wrap::handle(function () {
             throw new RuntimeException("nope");
         })
@@ -138,11 +156,13 @@ describe("ok() and fail() callbacks", function () {
 });
 
 /**
- * rescue(): flips to ok and clears error
+ * --------------------------------------------------------------------------
+ * rescue()
+ * --------------------------------------------------------------------------
  */
 describe("rescue()", function () {
     it(
-        "provides fallback value, flips to ok, and clears previous error",
+        "flips failure to success with fallback value and clears error",
         function () {
             $wrap = Wrap::handle(function () {
                 throw new RuntimeException("oops");
@@ -175,169 +195,70 @@ describe("rescue()", function () {
 });
 
 /**
- * then(): scalar (or any) transformation
+ * --------------------------------------------------------------------------
+ * always() and finally()
+ * --------------------------------------------------------------------------
  */
-describe("then()", function () {
-    it("transforms a non-iterable value on success", function () {
-        $v = Wrap::handle(fn() => 10)
-            ->then(fn(int $x) => $x + 5)
-            ->then(fn(int $x) => (string) ($x * 2)) // "30"
-            ->getValueOr("nope");
-
-        expect($v)->toBe("30");
-    });
-
-    it("does not run on failure", function () {
-        $v = Wrap::handle(function () {
-            throw new RuntimeException("bad");
-        })
-            ->then(fn($x) => $x + 1)
-            ->getValueOr("fallback");
-
-        expect($v)->toBe("fallback");
-    });
-});
-
-/**
- * map(): iterable-only transformation
- */
-describe("map()", function () {
-    it("maps over arrays", function () {
-        $out = Wrap::handle(fn() => [1, 2, 3])
-            ->map(fn($v) => $v * $v)
-            ->getValueOr([]);
-
-        expect($out)->toBe([1, 4, 9]);
-    });
-
-    it("preserves keys while mapping", function () {
-        $out = Wrap::handle(fn() => ["a" => 1, "b" => 2])
-            ->map(fn($v, $k) => $k . $v)
-            ->getValueOr([]);
-
-        expect($out)->toBe(["a" => "a1", "b" => "b2"]);
-    });
-
-    it("accepts Traversable (e.g., ArrayIterator)", function () {
-        $iter = new ArrayIterator([1, 2, 3]);
-        $out = Wrap::handle(fn() => $iter)->map(fn($v) => $v + 1)->getValueOr([]);
-
-        // ArrayIterator will be re-materialized into array by map()
-        expect($out)->toBe([2, 3, 4]);
-    });
-
-    it(
-        "fails with InvalidArgumentException when value is not iterable",
-        function () {
-            $wrap = Wrap::handle(fn() => 100)->map(fn($v) => $v); // should invalidate
-
-            expect($wrap->isOk())
-                ->toBeFalse()
-                ->and($wrap->getError())
-                ->toBeInstanceOf(InvalidArgumentException::class)
-                ->and($wrap->getValueOr("x"))
-                ->toBe("x");
-        },
-    );
-});
-
-/**
- * filter(): iterable-only predicate
- */
-describe("filter()", function () {
-    it("filters arrays by predicate and preserves keys", function () {
-        $out = Wrap::handle(fn() => ["x" => 1, "y" => 2, "z" => 3, "w" => 4])
-            ->filter(fn($v) => $v % 2 === 0)
-            ->getValueOr([]);
-
-        expect($out)->toBe(["y" => 2, "w" => 4]);
-    });
-
-    it(
-        "fails with InvalidArgumentException when value is not iterable",
-        function () {
-            $wrap = Wrap::handle(fn() => "not-iterable")->filter(fn() => true);
-
-            expect($wrap->isOk())
-                ->toBeFalse()
-                ->and($wrap->getError())
-                ->toBeInstanceOf(InvalidArgumentException::class);
-        },
-    );
-});
-
-/**
- * reduce(): iterable -> accumulator
- */
-describe("reduce()", function () {
-    it("reduces numeric arrays to a sum", function () {
-        $sum = Wrap::handle(fn() => [1, 2, 3, 4, 5])
-            ->reduce(fn(int $acc, int $v) => $acc + $v, 0)
-            ->getValueOr(-1);
-
-        expect($sum)->toBe(15);
-    });
-
-    it("reduces to a different type (e.g., string concat)", function () {
-        $concat = Wrap::handle(fn() => [1, 2, 3])
-            ->reduce(fn(string $acc, int $v) => $acc . (string) $v, "")
-            ->getValueOr("nope");
-
-        expect($concat)->toBe("123");
-    });
-
-    it(
-        "fails with InvalidArgumentException when value is not iterable",
-        function () {
-            $wrap = Wrap::handle(fn() => 7)->reduce(fn($acc, $v) => $acc, 0);
-
-            expect($wrap->isOk())
-                ->toBeFalse()
-                ->and($wrap->getError())
-                ->toBeInstanceOf(InvalidArgumentException::class);
-        },
-    );
-});
-
-/**
- * always(): finally-like callback
- */
-describe("always()", function () {
-    it("runs after success with expected parameters", function () {
+describe("always() & finally()", function () {
+    it("always() runs after success with expected parameters", function () {
         $seen = null;
-
         $wrap = Wrap::handle(fn() => 10);
+
         $wrap->always(function (bool $ok, ?Throwable $err, mixed $val) use (
             &$seen,
         ) {
-            // Expect ok=true, err=null, val=10
             $seen = [$ok, $err, $val];
         });
 
         expect($seen)->toBe([true, null, 10]);
     });
 
-    it("runs after failure with expected parameters", function () {
+    it("always() runs after failure with expected parameters", function () {
         $seen = null;
-
         $wrap = Wrap::handle(function () {
             throw new RuntimeException("x");
         });
+
         $wrap->always(function (bool $ok, ?Throwable $err, mixed $val) use (
             &$seen,
         ) {
-            // Expect ok=false, err is RuntimeException, val=null
             $seen = [$ok, $err instanceof RuntimeException, $val];
         });
 
         expect($seen)->toBe([false, true, null]);
     });
+
+    it(
+        "finally() runs and keeps chaining; invalidates if callback throws",
+        function () {
+            // normal path
+            $wrap = Wrap::handle(fn() => 5)
+                ->finally(function (bool $ok, ?Throwable $err, mixed $val) {
+                    /* no-op */
+                })
+                ->then(fn(int $v) => $v + 1);
+
+            expect($wrap->isOk())->toBeTrue()->and($wrap->getValue())->toBe(6);
+
+            // throwing path -> invalidated
+            $wrap2 = Wrap::handle(fn() => 1)->finally(function () {
+                throw new RuntimeException("inside-finally");
+            });
+
+            expect($wrap2->isOk())
+                ->toBeFalse()
+                ->and($wrap2->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class);
+        },
+    );
 });
 
 /**
- * Accessors and getValueOr()
+ * --------------------------------------------------------------------------
+ * Accessors and extraction helpers
+ * --------------------------------------------------------------------------
  */
-describe("accessors & getValueOr", function () {
+describe("accessors & extraction", function () {
     it("getValueOr returns default when failed", function () {
         $val = Wrap::handle(function () {
             throw new RuntimeException("xx");
@@ -348,25 +269,261 @@ describe("accessors & getValueOr", function () {
 
     it("getValue returns the raw value without default logic", function () {
         $wrap = Wrap::handle(fn() => 0);
+
         expect($wrap->getValue())->toBe(0)->and($wrap->getValueOr(999))->toBe(0);
+    });
+
+    it("getValueOrCall computes lazy default only when needed", function () {
+        $calls = 0;
+        $lazy = function () use (&$calls) {
+            $calls++;
+            return "L";
+        };
+
+        // success + non-null -> no call
+        $v1 = Wrap::handle(fn() => "X")->getValueOrCall($lazy);
+        // success + null -> call
+        $v2 = Wrap::handle(fn() => null)->getValueOrCall($lazy);
+        // failure -> call
+        $v3 = Wrap::handle(function () {
+            throw new RuntimeException("e");
+        })->getValueOrCall($lazy);
+
+        expect($v1)
+            ->toBe("X")
+            ->and($v2)
+            ->toBe("L")
+            ->and($v3)
+            ->toBe("L")
+            ->and($calls)
+            ->toBe(2);
+    });
+
+    it(
+        "getValueOrNull returns value on success (even if null) else null",
+        function () {
+            $v1 = Wrap::handle(fn() => null)->getValueOrNull();
+            $v2 = Wrap::handle(fn() => 7)->getValueOrNull();
+            $v3 = Wrap::handle(function () {
+                throw new RuntimeException("e");
+            })->getValueOrNull();
+
+            expect($v1)->toBeNull()->and($v2)->toBe(7)->and($v3)->toBeNull();
+        },
+    );
+
+    it("getOrThrow returns value on success", function () {
+        $val = Wrap::handle(fn() => 55)->getOrThrow();
+        expect($val)->toBe(55);
+    });
+
+    it("getOrThrow throws captured error by default on failure", function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("boom");
+        });
+
+        try {
+            $wrap->getOrThrow();
+            throw new RuntimeException("should not reach");
+        } catch (Throwable $e) {
+            expect($e)
+                ->toBeInstanceOf(RuntimeException::class)
+                ->and($e->getMessage())
+                ->toBe("boom");
+        }
+    });
+
+    it("getOrThrow can map the error via factory", function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("boom");
+        });
+
+        try {
+            $wrap->getOrThrow(
+                fn($err) => new InvalidArgumentException("wrapped", 0, $err),
+            );
+            throw new RuntimeException("should not reach");
+        } catch (Throwable $e) {
+            expect($e)
+                ->toBeInstanceOf(InvalidArgumentException::class)
+                ->and($e->getPrevious())
+                ->toBeInstanceOf(RuntimeException::class)
+                ->and($e->getMessage())
+                ->toBe("wrapped");
+        }
     });
 });
 
 /**
- * when() / unless()
+ * --------------------------------------------------------------------------
+ * then() / safeThen()
+ * --------------------------------------------------------------------------
  */
-describe("when() & unless()", function () {
+describe("then() and safeThen()", function () {
+    it("then() transforms a non-iterable value on success", function () {
+        $v = Wrap::handle(fn() => 10)
+            ->then(fn(int $x) => $x + 5)
+            ->then(fn(int $x) => (string) ($x * 2)) // "30"
+            ->getValueOr("nope");
+
+        expect($v)->toBe("30");
+    });
+
+    it("then() does not run on failure", function () {
+        $v = Wrap::handle(function () {
+            throw new RuntimeException("bad");
+        })
+            ->then(fn($x) => $x + 1)
+            ->getValueOr("fallback");
+
+        expect($v)->toBe("fallback");
+    });
+
+    it(
+        "safeThen() catches exceptions and invalidates instead of throwing",
+        function () {
+            $wrap = Wrap::handle(fn() => 1)->safeThen(function () {
+                throw new RuntimeException("explode");
+            });
+
+            expect($wrap->isOk())
+                ->toBeFalse()
+                ->and($wrap->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class);
+        },
+    );
+});
+
+/**
+ * --------------------------------------------------------------------------
+ * map()/filter()/reduce() and safe variants
+ * --------------------------------------------------------------------------
+ */
+describe("map/filter/reduce and safe variants", function () {
+    it("map() maps over arrays and preserves keys", function () {
+        $out = Wrap::handle(fn() => ["a" => 1, "b" => 2])
+            ->map(fn($v, $k) => $k . $v)
+            ->getValueOr([]);
+
+        expect($out)->toBe(["a" => "a1", "b" => "b2"]);
+    });
+
+    it("map() accepts Traversable and re-materializes into array", function () {
+        $iter = new ArrayIterator([1, 2, 3]);
+        $out = Wrap::handle(fn() => $iter)->map(fn($v) => $v + 1)->getValueOr([]);
+
+        expect($out)->toBe([2, 3, 4]);
+    });
+
+    it("map() invalidates when value is not iterable", function () {
+        $wrap = Wrap::handle(fn() => 100)->map(fn($v) => $v);
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class);
+    });
+
+    it(
+        "safeMap() invalidates on mapper exception and preserves previous in error",
+        function () {
+            $wrap = Wrap::handle(fn() => [1, 2, 3])->safeMap(function () {
+                throw new RuntimeException("mapper-error");
+            });
+
+            expect($wrap->isOk())
+                ->toBeFalse()
+                ->and($wrap->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class)
+                ->and($wrap->getError()?->getPrevious())
+                ->toBeInstanceOf(RuntimeException::class);
+        },
+    );
+
+    it("filter() filters arrays by predicate and preserves keys", function () {
+        $out = Wrap::handle(fn() => ["x" => 1, "y" => 2, "z" => 3, "w" => 4])
+            ->filter(fn($v) => $v % 2 === 0)
+            ->getValueOr([]);
+
+        expect($out)->toBe(["y" => 2, "w" => 4]);
+    });
+
+    it("filter() invalidates when value is not iterable", function () {
+        $wrap = Wrap::handle(fn() => "not-iterable")->filter(fn() => true);
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class);
+    });
+
+    it("safeFilter() invalidates on predicate exception", function () {
+        $wrap = Wrap::handle(fn() => [1, 2, 3])->safeFilter(function () {
+            throw new RuntimeException("pred-error");
+        });
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())
+            ->toBeInstanceOf(RuntimeException::class);
+    });
+
+    it("reduce() reduces numeric arrays to a sum", function () {
+        $sum = Wrap::handle(fn() => [1, 2, 3, 4, 5])
+            ->reduce(fn(int $acc, int $v) => $acc + $v, 0)
+            ->getValueOr(-1);
+
+        expect($sum)->toBe(15);
+    });
+
+    it("reduce() reduces to different type (e.g. string concat)", function () {
+        $concat = Wrap::handle(fn() => [1, 2, 3])
+            ->reduce(fn(string $acc, int $v) => $acc . (string) $v, "")
+            ->getValueOr("nope");
+
+        expect($concat)->toBe("123");
+    });
+
+    it("reduce() invalidates when value is not iterable", function () {
+        $wrap = Wrap::handle(fn() => 7)->reduce(fn($acc, $v) => $acc, 0);
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class);
+    });
+
+    it("safeReduce() invalidates on reducer exception", function () {
+        $wrap = Wrap::handle(fn() => [1, 2, 3])->safeReduce(function () {
+            throw new RuntimeException("reducer-error");
+        }, 0);
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())
+            ->toBeInstanceOf(RuntimeException::class);
+    });
+});
+
+/**
+ * --------------------------------------------------------------------------
+ * Conditional helpers: when/unless, whenTrue/whenFalse, branch
+ * --------------------------------------------------------------------------
+ */
+describe("conditional helpers", function () {
     it("when() runs only when predicate is true (success state)", function () {
         $log = [];
 
         Wrap::handle(fn() => 10)
             ->when(fn(int $v) => $v > 5, function ($v) use (&$log) {
-                // should run
-                $log[] = "when:$v";
+                $log[] = "when:$v"; // should run
             })
             ->unless(fn(int $v) => $v > 5, function ($v) use (&$log) {
-                // should NOT run
-                $log[] = "unless:$v";
+                $log[] = "unless:$v"; // should NOT run
             });
 
         expect($log)->toBe(["when:10"]);
@@ -377,12 +534,10 @@ describe("when() & unless()", function () {
 
         Wrap::handle(fn() => 3)
             ->when(fn(int $v) => $v > 5, function ($v) use (&$log) {
-                // should NOT run
-                $log[] = "when:$v";
+                $log[] = "when:$v"; // should NOT run
             })
             ->unless(fn(int $v) => $v > 5, function ($v) use (&$log) {
-                // should run
-                $log[] = "unless:$v";
+                $log[] = "unless:$v"; // should run
             });
 
         expect($log)->toBe(["unless:3"]);
@@ -404,111 +559,65 @@ describe("when() & unless()", function () {
         expect($called)->toBeFalse();
     });
 
-    it("when() invalidates the chain if callback throws", function () {
-        $wrap = Wrap::handle(fn() => 10)->when(fn() => true, function () {
-            // throw inside when-callback -> should invalidate with InvalidArgumentException
-            throw new RuntimeException("inside-when");
-        });
-
-        expect($wrap->isOk())
-            ->toBeFalse()
-            ->and($wrap->getError())
-            ->toBeInstanceOf(InvalidArgumentException::class)
-            ->and($wrap->getValueOr("x"))
-            ->toBe("x");
-    });
-
-    it("unless() invalidates the chain if callback throws", function () {
-        $wrap = Wrap::handle(fn() => 0)->unless(fn(int $v) => $v > 0, function () {
-            // throw inside unless-callback -> should invalidate with InvalidArgumentException
-            throw new RuntimeException("inside-unless");
-        });
-
-        expect($wrap->isOk())
-            ->toBeFalse()
-            ->and($wrap->getError())
-            ->toBeInstanceOf(InvalidArgumentException::class);
-    });
-
     it(
-        "when()/unless() do not modify stored value and allow continued chaining",
+        "when() invalidates the chain if callback throws (previous preserved)",
         function () {
-            $val = Wrap::handle(fn() => 5)
-                ->when(fn(int $v) => $v === 5, fn() => null) // side-effect only
-                ->unless(fn(int $v) => $v < 0, fn() => null) // side-effect only
-                ->then(fn(int $v) => $v * 2) // value should still be 5 here
-                ->getValueOr(-1);
-
-            expect($val)->toBe(10);
-        },
-    );
-});
-
-/**
- * whenTrue() / whenFalse()
- */
-describe("whenTrue() & whenFalse()", function () {
-    it("whenTrue() runs only when value is strictly true", function () {
-        $called = false;
-
-        Wrap::handle(fn() => true)
-            ->whenTrue(function ($v) use (&$called) {
-                // should run
-                $called = $v === true;
-            })
-            ->whenFalse(function () {
-                // should NOT run
-                throw new RuntimeException("whenFalse should not run");
+            $wrap = Wrap::handle(fn() => 10)->when(fn() => true, function () {
+                throw new RuntimeException("inside-when");
             });
 
-        expect($called)->toBeTrue();
-    });
-
-    it("whenFalse() runs only when value is strictly false", function () {
-        $called = false;
-
-        Wrap::handle(fn() => false)
-            ->whenTrue(function () {
-                // should NOT run
-                throw new RuntimeException("whenTrue should not run");
-            })
-            ->whenFalse(function ($v) use (&$called) {
-                // should run
-                $called = $v === false;
-            });
-
-        expect($called)->toBeTrue();
-    });
-
-    it(
-        "with non-boolean value, whenTrue/whenFalse use bool-cast check",
-        function () {
-            $log = [];
-
-            // truthy case
-            Wrap::handle(fn() => 123)
-                ->whenTrue(function () use (&$log) {
-                    $log[] = "T";
-                })
-                ->whenFalse(function () use (&$log) {
-                    $log[] = "F";
-                });
-
-            // falsy case
-            Wrap::handle(fn() => 0)
-                ->whenTrue(function () use (&$log) {
-                    $log[] = "T";
-                })
-                ->whenFalse(function () use (&$log) {
-                    $log[] = "F";
-                });
-
-            expect($log)->toBe(["T", "F"]);
+            expect($wrap->isOk())
+                ->toBeFalse()
+                ->and($wrap->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class)
+                ->and($wrap->getError()?->getPrevious())
+                ->toBeInstanceOf(RuntimeException::class);
         },
     );
 
     it(
-        "whenTrue/whenFalse do not alter the value and allow further then()",
+        "unless() invalidates the chain if callback throws (previous preserved)",
+        function () {
+            $wrap = Wrap::handle(fn() => 0)->unless(
+                fn(int $v) => $v > 0,
+                function () {
+                    throw new RuntimeException("inside-unless");
+                },
+            );
+
+            expect($wrap->isOk())
+                ->toBeFalse()
+                ->and($wrap->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class)
+                ->and($wrap->getError()?->getPrevious())
+                ->toBeInstanceOf(RuntimeException::class);
+        },
+    );
+
+    it("whenTrue() runs only when value is strictly truthy by cast", function () {
+        $log = [];
+
+        Wrap::handle(fn() => 123)
+            ->whenTrue(function () use (&$log) {
+                $log[] = "T";
+            })
+            ->whenFalse(function () use (&$log) {
+                $log[] = "F";
+            });
+
+        Wrap::handle(fn() => 0)
+            ->whenTrue(function () use (&$log) {
+                $log[] = "T";
+            })
+            ->whenFalse(function () use (&$log) {
+                $log[] = "F";
+            });
+
+        expect($log)->toBe(["T", "F"]);
+    });
+
+    it(
+        "whenFalse()/whenTrue() do not alter value and allow further then()",
         function () {
             $out = Wrap::handle(fn() => true)
                 ->whenTrue(fn() => null) // side-effect only
@@ -519,13 +628,8 @@ describe("whenTrue() & whenFalse()", function () {
             expect($out)->toBe("yes");
         },
     );
-});
 
-/**
- * branch(): boolean if/else style
- */
-describe("branch()", function () {
-    it("runs onTrue when value casts to true", function () {
+    it("branch() runs onTrue when value casts to true", function () {
         $log = [];
 
         Wrap::handle(fn() => 1) // truthy
@@ -541,7 +645,7 @@ describe("branch()", function () {
         expect($log)->toBe(["T"]);
     });
 
-    it("runs onFalse when value casts to false", function () {
+    it("branch() runs onFalse when value casts to false", function () {
         $log = [];
 
         Wrap::handle(fn() => 0) // falsy
@@ -557,29 +661,43 @@ describe("branch()", function () {
         expect($log)->toBe(["F"]);
     });
 
-    it("does nothing on failure state", function () {
+    it("branch() does nothing on failure state", function () {
         $log = [];
 
         Wrap::handle(function () {
             throw new RuntimeException("x");
-        })->branch(fn() => ($log[] = "T"), fn() => ($log[] = "F"));
+        })->branch(
+            function () use (&$log) {
+                $log[] = "T";
+            },
+            function () use (&$log) {
+                $log[] = "F";
+            },
+        );
 
         expect($log)->toBe([]);
     });
 
-    it("invalidates when a branch callback throws", function () {
-        $wrap = Wrap::handle(fn() => true)->branch(
-            fn() => throw new RuntimeException("boom"),
-            fn() => null,
-        );
+    it(
+        "branch() invalidates when a branch callback throws (previous preserved)",
+        function () {
+            $wrap = Wrap::handle(fn() => true)->branch(
+                function () {
+                    throw new RuntimeException("boom");
+                },
+                function () {},
+            );
 
-        expect($wrap->isOk())
-            ->toBeFalse()
-            ->and($wrap->getError())
-            ->toBeInstanceOf(InvalidArgumentException::class);
-    });
+            expect($wrap->isOk())
+                ->toBeFalse()
+                ->and($wrap->getError())
+                ->toBeInstanceOf(InvalidArgumentException::class)
+                ->and($wrap->getError()?->getPrevious())
+                ->toBeInstanceOf(RuntimeException::class);
+        },
+    );
 
-    it("keeps value untouched and allows further chaining", function () {
+    it("branch() keeps value untouched and allows further chaining", function () {
         $out = Wrap::handle(fn() => true)
             ->branch(fn() => null, fn() => null) // side effects only
             ->then(fn(bool $b) => $b ? "yes" : "no")
