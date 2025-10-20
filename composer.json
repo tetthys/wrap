@@ -1,6 +1,6 @@
 {
   "name": "tetthys/wrap",
-  "description": "Minimal Result-like wrapper with map/filter/reduce for iterable values (PHP 8.3+).",
+  "description": "Minimal Result-like wrapper with fluent map/filter/reduce and conditional helpers for PHP 8.3+.",
   "type": "library",
   "license": "MIT",
   "autoload": {

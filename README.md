@@ -1,6 +1,6 @@
 # Wrap
 
-> Minimal Result-like wrapper with map/filter/reduce for iterable values (PHP 8.3+).
+> Minimal Result-like wrapper with fluent map/filter/reduce and conditional helpers for PHP 8.3+.
 
 ---
 
@@ -23,7 +23,7 @@ $result = Wrap::handle(fn() => riskyOperation())
     ->rescue(fn() => 42)
     ->map(fn($v) => $v * 2)
     ->then(fn($v) => $v + 1)
-    ->always(fn($ok, $err, $val) => \Log::debug('Done'))
+    ->always(fn($ok, $err, $val) => \Log::debug('Done', compact('ok', 'val')))
     ->getValueOr(0);
 
 echo $result; // e.g. 85
@@ -31,11 +31,11 @@ echo $result; // e.g. 85
 
 ---
 
-## Method Usage
+## Core Methods
 
 ### `Wrap::handle(callable $callback)`
 
-Safely execute a callable and wrap its result or exception.
+Safely executes a callable and captures either its return value or thrown exception.
 
 ```php
 $wrap = Wrap::handle(fn() => 1 / 0);
@@ -45,7 +45,7 @@ $wrap = Wrap::handle(fn() => 1 / 0);
 
 ### `ok(fn($value))`
 
-Run only if successful (side effect only).
+Runs only when successful — typically for side effects such as logging.
 
 ```php
 ->ok(fn($v) => \Log::info("Value: {$v}"));
@@ -55,7 +55,7 @@ Run only if successful (side effect only).
 
 ### `fail(fn($error))`
 
-Run only on failure (for logging or alerts).
+Runs only when failed — typically for alerts or exception logs.
 
 ```php
 ->fail(fn($e) => \Log::error($e->getMessage()));
@@ -65,7 +65,7 @@ Run only on failure (for logging or alerts).
 
 ### `rescue(fn($error))`
 
-Provide a fallback value when an error occurs.
+Provides a fallback value on failure, **flipping the state to success** so that chaining continues.
 
 ```php
 ->rescue(fn() => 'default value');
@@ -75,7 +75,7 @@ Provide a fallback value when an error occurs.
 
 ### `map(fn($value))`
 
-Transform the stored value if successful.
+Transforms each element if the stored value is iterable.
 
 ```php
 ->map(fn($v) => $v * 2);
@@ -85,7 +85,8 @@ Transform the stored value if successful.
 
 ### `then(fn($value))`
 
-Alias of `map()` for fluent, chain-style transformations.
+Transforms any (scalar or complex) value on success.
+Alias of `map()` conceptually, but not limited to iterables.
 
 ```php
 ->then(fn($v) => $v + 1);
@@ -93,9 +94,29 @@ Alias of `map()` for fluent, chain-style transformations.
 
 ---
 
+### `filter(fn($value, $key = null))`
+
+Filters iterable values by predicate.
+
+```php
+->filter(fn($v) => $v > 10);
+```
+
+---
+
+### `reduce(fn($acc, $value, $key = null), $initial)`
+
+Reduces iterable values into a single accumulator.
+
+```php
+->reduce(fn($acc, $v) => $acc + $v, 0);
+```
+
+---
+
 ### `always(fn($ok, $error, $value))`
 
-Always runs, like `finally`.
+Always runs (similar to `finally`).
 
 ```php
 ->always(fn($ok, $err, $val) => \Log::debug('Finished', compact('ok', 'err')));
@@ -103,51 +124,85 @@ Always runs, like `finally`.
 
 ---
 
-### `isOk()`
+## Conditional Helpers (New)
 
-Check whether the operation succeeded.
+### `when(fn($value): bool, fn($value))`
+
+Run a callback **only when the predicate returns true**.
 
 ```php
-if ($wrap->isOk()) echo "All good!";
+Wrap::handle(fn() => 10)
+    ->when(fn($v) => $v > 5, fn($v) => echo "✅ Greater than 5");
 ```
 
 ---
 
-### `getError()`
+### `unless(fn($value): bool, fn($value))`
 
-Retrieve the captured exception, or `null` if success.
+Run a callback **only when the predicate returns false**.
 
 ```php
-$error = $wrap->getError();
+Wrap::handle(fn() => 3)
+    ->unless(fn($v) => $v > 5, fn($v) => echo "❌ Less or equal to 5");
 ```
 
 ---
 
-### `getValue()`
+### `whenTrue(fn($value))`
 
-Get the current stored value (may be `null` if failed).
+Boolean-specialized helper: run only when `(bool)$value === true`.
 
 ```php
-$value = $wrap->getValue();
+Wrap::handle(fn() => true)
+    ->whenTrue(fn() => echo "It's true!");
 ```
 
 ---
 
-### `getValueOr($default)`
+### `whenFalse(fn($value))`
 
-Return the stored value or a fallback default.
+Boolean-specialized helper: run only when `(bool)$value === false`.
 
 ```php
-$value = $wrap->getValueOr(0);
+Wrap::handle(fn() => false)
+    ->whenFalse(fn() => echo "It's false!");
 ```
 
 ---
 
-## Optional: Define your own `wrap()` helper in project root
+## Accessors
 
-You can define a global helper at your **project root** (e.g., `helpers.php`) and autoload it via Composer.
+| Method                 | Description                               | Example                         |
+| ---------------------- | ----------------------------------------- | ------------------------------- |
+| `isOk()`               | Returns whether operation succeeded.      | `if ($wrap->isOk()) echo "OK";` |
+| `getError()`           | Returns the captured exception or `null`. | `$err = $wrap->getError();`     |
+| `getValue()`           | Returns stored value (may be `null`).     | `$v = $wrap->getValue();`       |
+| `getValueOr($default)` | Returns stored value or fallback default. | `$v = $wrap->getValueOr(0);`    |
 
-**1) Create `helpers.php` at project root:**
+---
+
+## Example: Conditional Flow
+
+```php
+Wrap::handle(fn() => 10)
+    ->then(fn(int $v) => $v > 5)
+    ->whenTrue(fn() => echo "✅ Enough balance")
+    ->whenFalse(fn() => echo "❌ Not enough");
+```
+
+Output:
+
+```
+✅ Enough balance
+```
+
+---
+
+## Optional Helper Function
+
+You can define a global `wrap()` function in your project for convenience.
+
+**helpers.php**
 
 ```php
 <?php
@@ -156,7 +211,7 @@ declare(strict_types=1);
 
 if (!function_exists('wrap')) {
     /**
-     * Wrap a callback execution with \Tetthys\Wrap\Wrap.
+     * Shortcut for Wrap::handle()
      *
      * @template TResult
      * @param callable(): TResult $callback
@@ -164,13 +219,12 @@ if (!function_exists('wrap')) {
      */
     function wrap(callable $callback): \Tetthys\Wrap\Wrap
     {
-        /** @var \Tetthys\Wrap\Wrap<TResult, \Throwable> */
         return \Tetthys\Wrap\Wrap::handle($callback);
     }
 }
 ```
 
-**2) Register it in `composer.json`:**
+**composer.json**
 
 ```json
 {
@@ -186,7 +240,7 @@ Then run:
 composer dump-autoload
 ```
 
-**3) Use it anywhere:**
+**Usage:**
 
 ```php
 $result = wrap(fn() => riskyOperation())
