@@ -1,10 +1,10 @@
 # Wrap
 
-> Minimal Result-like wrapper with fluent map/filter/reduce and conditional helpers for PHP 8.3+.
+> A minimal, fluent, **Result-like wrapper** for PHP 8.3+ — featuring safe execution, functional operators (`map`, `filter`, `reduce`), and expressive conditional helpers (`when`, `unless`, `branch`, etc.).
 
 ---
 
-## Installation
+## 🚀 Installation
 
 ```bash
 composer require tetthys/wrap
@@ -12,7 +12,7 @@ composer require tetthys/wrap
 
 ---
 
-## Basic Example
+## 💡 Quick Example
 
 ```php
 use Tetthys\Wrap\Wrap;
@@ -21,21 +21,20 @@ $result = Wrap::handle(fn() => riskyOperation())
     ->ok(fn($v) => \Log::info("Success: {$v}"))
     ->fail(fn($e) => \Log::error($e->getMessage()))
     ->rescue(fn() => 42)
-    ->map(fn($v) => $v * 2)
-    ->then(fn($v) => $v + 1)
+    ->then(fn($v) => $v * 2)
     ->always(fn($ok, $err, $val) => \Log::debug('Done', compact('ok', 'val')))
     ->getValueOr(0);
 
-echo $result; // e.g. 85
+echo $result; // e.g. 84
 ```
 
 ---
 
-## Core Methods
+## 🧩 Core API
 
 ### `Wrap::handle(callable $callback)`
 
-Safely executes a callable and captures either its return value or thrown exception.
+Safely executes a callable and captures either its return value or any thrown `Throwable`.
 
 ```php
 $wrap = Wrap::handle(fn() => 1 / 0);
@@ -43,9 +42,9 @@ $wrap = Wrap::handle(fn() => 1 / 0);
 
 ---
 
-### `ok(fn($value))`
+### `ok(callable $callback)`
 
-Runs only when successful — typically for side effects such as logging.
+Runs only when successful — typically used for logging or side effects.
 
 ```php
 ->ok(fn($v) => \Log::info("Value: {$v}"));
@@ -53,9 +52,9 @@ Runs only when successful — typically for side effects such as logging.
 
 ---
 
-### `fail(fn($error))`
+### `fail(callable $callback)`
 
-Runs only when failed — typically for alerts or exception logs.
+Runs only when failed — ideal for alerts or error logs.
 
 ```php
 ->fail(fn($e) => \Log::error($e->getMessage()));
@@ -63,9 +62,9 @@ Runs only when failed — typically for alerts or exception logs.
 
 ---
 
-### `rescue(fn($error))`
+### `rescue(callable $callback)`
 
-Provides a fallback value on failure, **flipping the state to success** so that chaining continues.
+Provides a fallback value **on failure**, flipping the state to *success* so the chain continues.
 
 ```php
 ->rescue(fn() => 'default value');
@@ -73,20 +72,9 @@ Provides a fallback value on failure, **flipping the state to success** so that 
 
 ---
 
-### `map(fn($value))`
+### `then(callable $callback)`
 
-Transforms each element if the stored value is iterable.
-
-```php
-->map(fn($v) => $v * 2);
-```
-
----
-
-### `then(fn($value))`
-
-Transforms any (scalar or complex) value on success.
-Alias of `map()` conceptually, but not limited to iterables.
+Transforms the stored value when successful (not limited to iterables).
 
 ```php
 ->then(fn($v) => $v + 1);
@@ -94,9 +82,35 @@ Alias of `map()` conceptually, but not limited to iterables.
 
 ---
 
-### `filter(fn($value, $key = null))`
+### `safeThen(callable $callback)`
 
-Filters iterable values by predicate.
+Same as `then()`, but catches exceptions and marks the chain as failed instead of throwing.
+
+```php
+->safeThen(fn($v) => riskyTransform($v));
+```
+
+---
+
+### `map(callable $mapper)`
+
+Applies a function to each element when the value is iterable.
+
+```php
+->map(fn($v) => $v * 2);
+```
+
+---
+
+### `safeMap(callable $mapper)`
+
+Like `map()`, but automatically invalidates on exceptions inside the mapper.
+
+---
+
+### `filter(callable $predicate)`
+
+Filters iterable values by predicate; preserves keys.
 
 ```php
 ->filter(fn($v) => $v > 10);
@@ -104,9 +118,15 @@ Filters iterable values by predicate.
 
 ---
 
-### `reduce(fn($acc, $value, $key = null), $initial)`
+### `safeFilter(callable $predicate)`
 
-Reduces iterable values into a single accumulator.
+Variant of `filter()` that invalidates if the predicate throws.
+
+---
+
+### `reduce(callable $reducer, mixed $initial)`
+
+Reduces an iterable into a single accumulated value.
 
 ```php
 ->reduce(fn($acc, $v) => $acc + $v, 0);
@@ -114,21 +134,52 @@ Reduces iterable values into a single accumulator.
 
 ---
 
-### `always(fn($ok, $error, $value))`
+### `safeReduce(callable $reducer, mixed $initial)`
 
-Always runs (similar to `finally`).
+Catches reducer exceptions and marks the chain as failed.
+
+---
+
+### `always(callable $callback)`
+
+Always runs, like a `finally` block.
+Receives `(bool $ok, ?Throwable $error, mixed $value)`.
 
 ```php
-->always(fn($ok, $err, $val) => \Log::debug('Finished', compact('ok', 'err')));
+->always(fn($ok, $err, $val) => \Log::debug('Finished', compact('ok', 'val')));
 ```
 
 ---
 
-## Conditional Helpers (New)
+### `finally(callable $callback)`
+
+Similar to `always()`, but keeps the fluent chain alive; if the callback throws, the chain becomes failed.
+
+```php
+->finally(fn() => cleanup());
+```
+
+---
+
+## ⚙️ Accessors & Extraction
+
+| Method                                  | Description                                                    | Example                                   |
+| :-------------------------------------- | :------------------------------------------------------------- | :---------------------------------------- |
+| `isOk()`                                | Returns whether the chain succeeded.                           | `if ($wrap->isOk()) echo "OK";`           |
+| `getError()`                            | Returns the captured exception or `null`.                      | `$err = $wrap->getError();`               |
+| `getValue()`                            | Returns the stored value (may be `null`).                      | `$v = $wrap->getValue();`                 |
+| `getValueOr($default)`                  | Returns value or default.                                      | `$v = $wrap->getValueOr(0);`              |
+| `getValueOrCall(fn $factory)`           | Lazy default — calls the function only when needed.            | `$v = $wrap->getValueOrCall(fn() => 99);` |
+| `getValueOrNull()`                      | Returns value on success, otherwise `null`.                    | `$v = $wrap->getValueOrNull();`           |
+| `getOrThrow(?callable $factory = null)` | Returns value or throws (optionally map error via `$factory`). | `$v = $wrap->getOrThrow();`               |
+
+---
+
+## 🔀 Conditional Helpers
 
 ### `when(fn($value): bool, fn($value))`
 
-Run a callback **only when the predicate returns true**.
+Runs a callback **only when the predicate returns true**.
 
 ```php
 Wrap::handle(fn() => 10)
@@ -139,7 +190,7 @@ Wrap::handle(fn() => 10)
 
 ### `unless(fn($value): bool, fn($value))`
 
-Run a callback **only when the predicate returns false**.
+Runs a callback **only when the predicate returns false**.
 
 ```php
 Wrap::handle(fn() => 3)
@@ -150,7 +201,7 @@ Wrap::handle(fn() => 3)
 
 ### `whenTrue(fn($value))`
 
-Boolean-specialized helper: run only when `(bool)$value === true`.
+Boolean-specialized shortcut for truthy values.
 
 ```php
 Wrap::handle(fn() => true)
@@ -161,7 +212,7 @@ Wrap::handle(fn() => true)
 
 ### `whenFalse(fn($value))`
 
-Boolean-specialized helper: run only when `(bool)$value === false`.
+Boolean-specialized shortcut for falsy values.
 
 ```php
 Wrap::handle(fn() => false)
@@ -172,8 +223,7 @@ Wrap::handle(fn() => false)
 
 ### `branch(fn($onTrue), fn($onFalse))`
 
-Run exactly one of two callbacks depending on boolean value.
-Equivalent to an `if / else` block in fluent chain form.
+Fluent `if / else`-style branching.
 
 ```php
 Wrap::handle(fn() => 10 > 5)
@@ -185,18 +235,7 @@ Wrap::handle(fn() => 10 > 5)
 
 ---
 
-## Accessors
-
-| Method                 | Description                               | Example                         |
-| ---------------------- | ----------------------------------------- | ------------------------------- |
-| `isOk()`               | Returns whether operation succeeded.      | `if ($wrap->isOk()) echo "OK";` |
-| `getError()`           | Returns the captured exception or `null`. | `$err = $wrap->getError();`     |
-| `getValue()`           | Returns stored value (may be `null`).     | `$v = $wrap->getValue();`       |
-| `getValueOr($default)` | Returns stored value or fallback default. | `$v = $wrap->getValueOr(0);`    |
-
----
-
-## Example: Conditional Flow
+## 💬 Example: Conditional Flow
 
 ```php
 Wrap::handle(fn() => 10)
@@ -215,16 +254,14 @@ Output:
 
 ---
 
-## Optional Helper Function
+## 🪄 Optional Global Helper
 
-You can define a global `wrap()` function in your project for convenience.
+You can define a global helper `wrap()` for concise syntax.
 
 **helpers.php**
 
 ```php
 <?php
-
-declare(strict_types=1);
 
 if (!function_exists('wrap')) {
     /**
@@ -257,7 +294,7 @@ Then run:
 composer dump-autoload
 ```
 
-**Usage:**
+Usage:
 
 ```php
 $result = wrap(fn() => riskyOperation())
@@ -267,6 +304,16 @@ $result = wrap(fn() => riskyOperation())
 
 ---
 
-## License
+## 🧠 Why Use Wrap?
 
-MIT © Tetthys
+* ✨ Clean, functional, and chainable syntax
+* 🧱 Zero dependencies (pure PHP)
+* ⚡ Safe and exception-aware
+* 🧩 Fluent conditional flow (`when`, `unless`, `branch`)
+* 🧰 Optional global helper (`wrap()`)
+
+---
+
+## 📜 License
+
+**MIT © Tetthys**
