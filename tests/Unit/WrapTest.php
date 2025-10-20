@@ -520,3 +520,71 @@ describe("whenTrue() & whenFalse()", function () {
         },
     );
 });
+
+/**
+ * branch(): boolean if/else style
+ */
+describe("branch()", function () {
+    it("runs onTrue when value casts to true", function () {
+        $log = [];
+
+        Wrap::handle(fn() => 1) // truthy
+            ->branch(
+                function () use (&$log) {
+                    $log[] = "T";
+                },
+                function () use (&$log) {
+                    $log[] = "F";
+                },
+            );
+
+        expect($log)->toBe(["T"]);
+    });
+
+    it("runs onFalse when value casts to false", function () {
+        $log = [];
+
+        Wrap::handle(fn() => 0) // falsy
+            ->branch(
+                function () use (&$log) {
+                    $log[] = "T";
+                },
+                function () use (&$log) {
+                    $log[] = "F";
+                },
+            );
+
+        expect($log)->toBe(["F"]);
+    });
+
+    it("does nothing on failure state", function () {
+        $log = [];
+
+        Wrap::handle(function () {
+            throw new RuntimeException("x");
+        })->branch(fn() => ($log[] = "T"), fn() => ($log[] = "F"));
+
+        expect($log)->toBe([]);
+    });
+
+    it("invalidates when a branch callback throws", function () {
+        $wrap = Wrap::handle(fn() => true)->branch(
+            fn() => throw new RuntimeException("boom"),
+            fn() => null,
+        );
+
+        expect($wrap->isOk())
+            ->toBeFalse()
+            ->and($wrap->getError())
+            ->toBeInstanceOf(InvalidArgumentException::class);
+    });
+
+    it("keeps value untouched and allows further chaining", function () {
+        $out = Wrap::handle(fn() => true)
+            ->branch(fn() => null, fn() => null) // side effects only
+            ->then(fn(bool $b) => $b ? "yes" : "no")
+            ->getValueOr("err");
+
+        expect($out)->toBe("yes");
+    });
+});

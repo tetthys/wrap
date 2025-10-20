@@ -8,7 +8,8 @@ use InvalidArgumentException;
 use Throwable;
 
 /**
- * Minimal fluent Result-like wrapper with functional map/filter/reduce.
+ * Minimal fluent Result-like wrapper with functional map/filter/reduce
+ * and conditional helpers (when, unless, whenTrue, whenFalse, branch).
  *
  * @template TSuccess
  * @template TError of Throwable
@@ -138,8 +139,7 @@ final class Wrap
 
     /**
      * Transform the stored (scalar or any) value when successful.
-     * This matches the README’s fluent examples (alias of “map” conceptually,
-     * but does not require an iterable).
+     * Conceptually similar to map(), but not limited to iterables.
      *
      * @template TNext
      * @param callable(TSuccess): TNext $callback
@@ -271,10 +271,7 @@ final class Wrap
      */
     public function whenTrue(callable $callback): self
     {
-        return $this->when(
-            static fn($v): bool => (bool) $v === true,
-            $callback
-        );
+        return $this->when(static fn($v): bool => (bool) $v === true, $callback);
     }
 
     /**
@@ -286,10 +283,35 @@ final class Wrap
      */
     public function whenFalse(callable $callback): self
     {
-        return $this->unless(
-            static fn($v): bool => (bool) $v === true,
-            $callback
-        );
+        return $this->unless(static fn($v): bool => (bool) $v === true, $callback);
+    }
+
+    /**
+     * if/else-style branching helper for boolean-like values.
+     * Executes $onTrue if (bool)value === true, otherwise $onFalse.
+     * Does not modify the stored value; returns self for fluent chaining.
+     *
+     * @param callable(TSuccess): mixed $onTrue
+     * @param callable(TSuccess): mixed $onFalse
+     * @return self<TSuccess, TError>
+     */
+    public function branch(callable $onTrue, callable $onFalse): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            if ((bool) $this->value === true) {
+                $onTrue($this->value);
+            } else {
+                $onFalse($this->value);
+            }
+        } catch (Throwable $e) {
+            return $this->invalidate("Exception in branch(): {$e->getMessage()}");
+        }
+
+        return $this;
     }
 
     /** Flip to failed state with a standardized InvalidArgumentException. */
