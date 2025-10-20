@@ -69,7 +69,7 @@ final class Wrap
     {
         if (!$this->ok && $this->error) {
             $this->value = $callback($this->error);
-            $this->ok = true; // 🔧 make chain continue after rescue
+            $this->ok = true; // make chain continue after rescue
             $this->error = null; // clear previous error
         }
         return $this;
@@ -85,10 +85,12 @@ final class Wrap
     {
         return $this->ok;
     }
+
     public function getError(): ?Throwable
     {
         return $this->error;
     }
+
     public function getValue(): mixed
     {
         return $this->value;
@@ -115,6 +117,7 @@ final class Wrap
      * (kept for array/collection pipelines)
      *
      * @param callable(mixed, mixed=): mixed $mapper
+     * @return self<TSuccess, TError>
      */
     public function map(callable $mapper): self
     {
@@ -157,6 +160,7 @@ final class Wrap
      * Keep items that satisfy the predicate (iterables only).
      *
      * @param callable(mixed, mixed=): bool $predicate
+     * @return self<TSuccess, TError>
      */
     public function filter(callable $predicate): self
     {
@@ -202,6 +206,90 @@ final class Wrap
         /** @var self<TAcc, TError> $this */
         $this->value = $acc;
         return $this;
+    }
+
+    // -----------------------------------------------------
+    // Conditional helpers (PHP 8.3+)
+    // -----------------------------------------------------
+
+    /**
+     * Conditionally run a side-effect callback when predicate(value) === true.
+     * Does not modify the stored value; returns self for fluent chaining.
+     *
+     * @param callable(TSuccess): bool  $predicate
+     * @param callable(TSuccess): mixed $callback
+     * @return self<TSuccess, TError>
+     */
+    public function when(callable $predicate, callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            if ($predicate($this->value)) {
+                $callback($this->value);
+            }
+        } catch (Throwable $e) {
+            return $this->invalidate("Exception in when(): {$e->getMessage()}");
+        }
+
+        return $this;
+    }
+
+    /**
+     * Conditionally run a side-effect callback when predicate(value) === false.
+     * Does not modify the stored value; returns self for fluent chaining.
+     *
+     * @param callable(TSuccess): bool  $predicate
+     * @param callable(TSuccess): mixed $callback
+     * @return self<TSuccess, TError>
+     */
+    public function unless(callable $predicate, callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            if (!$predicate($this->value)) {
+                $callback($this->value);
+            }
+        } catch (Throwable $e) {
+            return $this->invalidate("Exception in unless(): {$e->getMessage()}");
+        }
+
+        return $this;
+    }
+
+    /**
+     * Boolean-specialized helper: run callback when (bool) value === true.
+     * Equivalent to: when(fn($v) => (bool)$v === true, $callback)
+     *
+     * @param callable(TSuccess): mixed $callback
+     * @return self<TSuccess, TError>
+     */
+    public function whenTrue(callable $callback): self
+    {
+        return $this->when(
+            static fn($v): bool => (bool) $v === true,
+            $callback
+        );
+    }
+
+    /**
+     * Boolean-specialized helper: run callback when (bool) value === false.
+     * Equivalent to: unless(fn($v) => (bool)$v === true, $callback)
+     *
+     * @param callable(TSuccess): mixed $callback
+     * @return self<TSuccess, TError>
+     */
+    public function whenFalse(callable $callback): self
+    {
+        return $this->unless(
+            static fn($v): bool => (bool) $v === true,
+            $callback
+        );
     }
 
     /** Flip to failed state with a standardized InvalidArgumentException. */
