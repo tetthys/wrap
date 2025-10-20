@@ -170,6 +170,21 @@ Wrap::handle(fn() => false)
 
 ---
 
+### `branch(fn($onTrue), fn($onFalse))`
+
+Run exactly one of two callbacks depending on boolean value.
+Equivalent to an `if / else` block in fluent chain form.
+
+```php
+Wrap::handle(fn() => 10 > 5)
+    ->branch(
+        fn() => echo "✅ Enough balance",
+        fn() => echo "❌ Not enough"
+    );
+```
+
+---
+
 ## Accessors
 
 | Method                 | Description                               | Example                         |
@@ -186,8 +201,10 @@ Wrap::handle(fn() => false)
 ```php
 Wrap::handle(fn() => 10)
     ->then(fn(int $v) => $v > 5)
-    ->whenTrue(fn() => echo "✅ Enough balance")
-    ->whenFalse(fn() => echo "❌ Not enough");
+    ->branch(
+        fn() => echo "✅ Enough balance",
+        fn() => echo "❌ Not enough"
+    );
 ```
 
 Output:
