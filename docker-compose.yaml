@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: dockerimages/phptestenv/Dockerfile
-    image: dockerimages/phptestenv:php8.3
+    image: dockerimages/phptestenv:php8.4
     container_name: tetthys-wrap-test
     working_dir: /workspace
     environment:

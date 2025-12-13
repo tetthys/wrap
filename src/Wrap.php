@@ -580,4 +580,270 @@ final class Wrap
         $this->error = new InvalidArgumentException($message, 0, $previous);
         return $this;
     }
+
+    /**
+     * Flat-map variant of then().
+     * The callback MUST return another Wrap instance.
+     *
+     * Use this to avoid breaking the chain when an operation already returns Wrap:
+     *   Wrap::handle(...)
+     *     ->andThen(fn($v) => Wrap::handle(...))
+     *     ->then(...)
+     *
+     * @template TNext
+     * @param callable(TSuccess): self<TNext, Throwable> $callback
+     * @return self<TNext, Throwable>
+     */
+    public function andThen(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            $next = $callback($this->value);
+
+            if (!$next instanceof self) {
+                return $this->invalidate(
+                    'Wrap::andThen callback must return an instance of Wrap'
+                );
+            }
+
+            $this->ok = $next->ok;
+            $this->error = $next->error;
+            $this->value = $next->value;
+
+            /** @var self<TNext, Throwable> $this */
+            return $this;
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in andThen(): {$e->getMessage()}",
+                $e,
+            );
+        }
+    }
+
+    /**
+     * Ensure that the predicate holds for the current value.
+     * If it returns false, the chain is invalidated.
+     *
+     * This is useful to replace patterns like:
+     *   ->then(fn($v) => condition ? $v : null)
+     * with an explicit failure:
+     *   ->ensure(fn($v) => condition, 'reason...')
+     *
+     * @param callable(TSuccess): bool $predicate
+     * @param string|callable(TSuccess): string $message
+     * @return self<TSuccess, Throwable>
+     */
+    public function ensure(callable $predicate, string|callable $message = 'Ensure failed'): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            if (!$predicate($this->value)) {
+                $msg = is_callable($message)
+                    ? $message($this->value)
+                    : $message;
+
+                return $this->invalidate($msg);
+            }
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in ensure(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Transform the captured error without changing the failure state.
+     *
+     * Typical uses:
+     * - Normalize infra exceptions into domain exceptions
+     * - Add more context/message
+     *
+     * @param callable(Throwable): Throwable $mapper
+     * @return self<TSuccess, TError>
+     */
+    public function mapError(callable $mapper): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        try {
+            $this->error = $mapper($this->error);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in mapError(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Recover from failure only when the error matches a condition.
+     *
+     * Examples:
+     *   ->recoverWhen(DepositQueryException::class, fn() => '0')
+     *   ->recoverWhen(fn($e) => $e->getCode() === 429, fn() => '0')
+     *
+     * @param class-string<Throwable>|callable(Throwable): bool $when
+     * @param callable(Throwable): TSuccess $fallback
+     * @return self<TSuccess, Throwable>
+     */
+    public function recoverWhen(string|callable $when, callable $fallback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        $err = $this->error;
+
+        $match = is_string($when)
+            ? $err instanceof $when
+            : (bool) $when($err);
+
+        if (!$match) {
+            return $this;
+        }
+
+        /** @var TError $typedErr */
+        $typedErr = $err;
+
+        $this->value = $fallback($typedErr);
+        $this->ok = true;
+        $this->error = null;
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when successful.
+     * If the callback throws, the chain is invalidated.
+     *
+     * Use for side effects you DO want to be part of the chain safety.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tap(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in tap(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when successful.
+     * Exceptions thrown by the callback are swallowed and do NOT affect chain state.
+     *
+     * Use for logging/metrics/tracing where failure must not break main flow.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tryTap(callable $callback): self
+    {
+        if ($this->ok) {
+            try {
+                $callback($this->value);
+            } catch (Throwable) {
+                // intentionally ignored
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when failed AND the error matches a condition.
+     *
+     * Examples:
+     *   ->failWhen(DepositQueryException::class, fn(DepositQueryException $e) => report($e))
+     *   ->failWhen(fn(Throwable $e) => $e->getCode() === 429, fn(Throwable $e) => sleep(1))
+     *
+     * @template TMatch of Throwable
+     * @param class-string<TMatch>|callable(Throwable): bool $when
+     * @param callable(TMatch): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function failWhen(string|callable $when, callable $callback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        $err = $this->error;
+
+        $match = is_string($when)
+            ? $err instanceof $when
+            : (bool) $when($err);
+
+        if (!$match) {
+            return $this;
+        }
+
+        try {
+            /** @var TMatch $typed */
+            $typed = $err;
+            $callback($typed);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in failWhen(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Rethrow the captured error when it matches a condition.
+     *
+     * Use when certain exceptions MUST escape the Wrap boundary.
+     *
+     * Examples:
+     *   ->rethrowWhen(DepositQueryException::class)
+     *
+     * @param class-string<Throwable>|callable(Throwable): bool $when
+     * @return self<TSuccess, TError>
+     * @throws Throwable
+     */
+    public function rethrowWhen(string|callable $when): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        $err = $this->error;
+
+        $match = is_string($when)
+            ? $err instanceof $when
+            : (bool) $when($err);
+
+        if ($match) {
+            throw $err;
+        }
+
+        return $this;
+    }
 }
