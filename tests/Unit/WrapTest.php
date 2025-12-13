@@ -1352,3 +1352,209 @@ describe('rescueWhen() with concrete exceptions', function () {
             ->and($wrap->getValue())->toBe(10);
     });
 });
+
+/**
+ * --------------------------------------------------------------------------
+ * Added helpers: rescue() fallback arity (callFallback)
+ * --------------------------------------------------------------------------
+ */
+describe('rescue() fallback arity', function () {
+    it('rescue() accepts zero-arg fallback (callFallback) and recovers', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('x');
+        })->rescue(fn() => 123);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getError())->toBeNull()
+            ->and($wrap->getValue())->toBe(123);
+    });
+
+    it('rescue() accepts one-arg fallback(Throwable) (callFallback) and recovers', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('x');
+        })->rescue(function (Throwable $e) {
+            return $e->getMessage() === 'x' ? 555 : 0;
+        });
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getError())->toBeNull()
+            ->and($wrap->getValue())->toBe(555);
+    });
+
+    it('rescue() invalidates when fallback throws (previous preserved)', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('orig');
+        })->rescue(function () {
+            throw new RuntimeException('fallback-boom');
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getPrevious()?->getMessage())->toBe('fallback-boom');
+    });
+
+    it('rescue() supports array-callable fallback with zero args (ReflectionMethod path)', function () {
+        $obj = new class() {
+            public function fallback(): int
+            {
+                return 900;
+            }
+        };
+
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('x');
+        })->rescue([$obj, 'fallback']);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(900)
+            ->and($wrap->getError())->toBeNull();
+    });
+});
+
+
+/**
+ * --------------------------------------------------------------------------
+ * Added helpers: safeOk / tryOk / safeFail / tryFail
+ * --------------------------------------------------------------------------
+ */
+describe('safeOk/tryOk/safeFail/tryFail', function () {
+    it('safeOk() runs on success; invalidates if callback throws (previous preserved)', function () {
+        $wrap = Wrap::handle(fn() => 1)->safeOk(function () {
+            throw new RuntimeException('boom');
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getPrevious()?->getMessage())->toBe('boom');
+    });
+
+    it('safeOk() does nothing on failure', function () {
+        $called = false;
+
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('x');
+        })->safeOk(function () use (&$called) {
+            $called = true;
+        });
+
+        expect($called)->toBeFalse()
+            ->and($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(RuntimeException::class);
+    });
+
+    it('tryOk() swallows callback exception and keeps chain ok', function () {
+        $wrap = Wrap::handle(fn() => 1)
+            ->tryOk(function () {
+                throw new RuntimeException('ignored');
+            })
+            ->then(fn(int $v) => $v + 1);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(2);
+    });
+
+    it('safeFail() runs on failure; invalidates if callback throws (previous preserved)', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('orig');
+        })->safeFail(function () {
+            throw new RuntimeException('fail-boom');
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getPrevious()?->getMessage())->toBe('fail-boom');
+    });
+
+    it('tryFail() swallows callback exception and preserves original error', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('orig');
+        })->tryFail(function () {
+            throw new RuntimeException('ignored');
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getMessage())->toBe('orig');
+    });
+
+    it('safeFail()/tryFail() do nothing on success', function () {
+        $calledSafe = false;
+        $calledTry = false;
+
+        $wrap = Wrap::handle(fn() => 10)
+            ->safeFail(function () use (&$calledSafe) {
+                $calledSafe = true;
+            })
+            ->tryFail(function () use (&$calledTry) {
+                $calledTry = true;
+            });
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($calledSafe)->toBeFalse()
+            ->and($calledTry)->toBeFalse();
+    });
+});
+
+
+/**
+ * --------------------------------------------------------------------------
+ * Added helpers: throwIfFailed / rethrow / rethrowRoot
+ * --------------------------------------------------------------------------
+ */
+describe('throwIfFailed/rethrow/rethrowRoot', function () {
+    it('throwIfFailed() does nothing on success', function () {
+        $wrap = Wrap::handle(fn() => 1)->throwIfFailed();
+
+        expect($wrap->isOk())->toBeTrue()->and($wrap->getValue())->toBe(1);
+    });
+
+    it('throwIfFailed() throws captured error by default on failure', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('boom');
+        });
+
+        expect(fn() => $wrap->throwIfFailed())
+            ->toThrow(RuntimeException::class, 'boom');
+    });
+
+    it('throwIfFailed() can map error via factory', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('boom');
+        });
+
+        expect(function () use ($wrap) {
+            $wrap->throwIfFailed(
+                fn($err) => new InvalidArgumentException('mapped', 0, $err),
+            );
+        })->toThrow(InvalidArgumentException::class, 'mapped');
+    });
+
+    it('rethrow() throws wrapper error as-is (invalidated InvalidArgumentException)', function () {
+        $wrap = Wrap::handle(fn() => 1)->safeThen(function () {
+            throw new RuntimeException('root');
+        });
+
+        // safeThen invalidates with InvalidArgumentException(previous=root)
+        expect(fn() => $wrap->rethrow())
+            ->toThrow(InvalidArgumentException::class);
+    });
+
+    it('rethrowRoot() throws previous/root error when invalidated wraps previous', function () {
+        $wrap = Wrap::handle(fn() => 1)->safeThen(function () {
+            throw new RuntimeException('root');
+        });
+
+        expect(fn() => $wrap->rethrowRoot())
+            ->toThrow(RuntimeException::class, 'root');
+    });
+
+    it('rethrowRoot() falls back to wrapper when there is no previous', function () {
+        $wrap = Wrap::fromError(new InvalidArgumentException('plain'));
+
+        expect(fn() => $wrap->rethrowRoot())
+            ->toThrow(InvalidArgumentException::class, 'plain');
+    });
+});

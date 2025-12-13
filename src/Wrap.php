@@ -121,11 +121,16 @@ final class Wrap
     public function rescue(callable $callback): self
     {
         if (!$this->ok && $this->error) {
-            /** @var TError $err */
-            $err = $this->error;
-            $this->value = $callback($err);
-            $this->ok = true; // allow further chaining
-            $this->error = null; // clear previous error
+            try {
+                $this->value = $this->callFallback($callback, $this->error);
+                $this->ok = true;
+                $this->error = null;
+            } catch (Throwable $e) {
+                return $this->invalidate(
+                    "Exception in rescue(): {$e->getMessage()}",
+                    $e,
+                );
+            }
         }
         return $this;
     }
@@ -1104,5 +1109,181 @@ final class Wrap
         }
 
         return $this->rescue($fallback);
+    }
+
+    /**
+     * Safely invoke a fallback callable that may accept
+     * zero arguments or one Throwable argument.
+     *
+     * @template T
+     * @param callable $callback
+     * @param Throwable|null $error
+     * @return T
+     */
+    private function callFallback(callable $callback, ?Throwable $error): mixed
+    {
+        try {
+            $ref = is_array($callback)
+                ? new \ReflectionMethod($callback[0], $callback[1])
+                : new \ReflectionFunction($callback);
+
+            if ($ref->getNumberOfParameters() === 0) {
+                return $callback();
+            }
+
+            return $callback($error);
+        } catch (Throwable $e) {
+            throw $e;
+        }
+    }
+
+    /**
+     * Run a side-effect callback only when successful.
+     * If the callback throws, invalidate the chain (captures as InvalidArgumentException with previous).
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function safeOk(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in safeOk(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when successful.
+     * Swallows any exception thrown by the callback and does NOT affect chain state.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tryOk(callable $callback): self
+    {
+        if ($this->ok) {
+            try {
+                $callback($this->value);
+            } catch (Throwable) {
+                // intentionally ignored
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when failed.
+     * If the callback throws, invalidate the chain (captures as InvalidArgumentException with previous).
+     *
+     * @param callable(TError): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function safeFail(callable $callback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        try {
+            /** @var TError $err */
+            $err = $this->error;
+            $callback($err);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in safeFail(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Run a side-effect callback only when failed.
+     * Swallows any exception thrown by the callback and does NOT affect chain state.
+     *
+     * @param callable(TError): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tryFail(callable $callback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        try {
+            /** @var TError $err */
+            $err = $this->error;
+            $callback($err);
+        } catch (Throwable) {
+            // intentionally ignored
+        }
+
+        return $this;
+    }
+
+    /**
+     * Throw if failed (state gate).
+     * Useful at the end of a chain to "escape" the Wrap boundary without extracting the value.
+     *
+     * @param null|callable(?Throwable): Throwable $factory Optional factory to map the captured error to a different exception.
+     * @return self<TSuccess, TError>
+     * @throws Throwable
+     */
+    public function throwIfFailed(?callable $factory = null): self
+    {
+        if ($this->ok) {
+            return $this;
+        }
+
+        if ($factory) {
+            throw $factory($this->error);
+        }
+
+        throw $this->error ?? new InvalidArgumentException('Wrap is in failed state.');
+    }
+
+    /**
+     * Rethrow the captured error as-is.
+     * (If invalidated, this throws the InvalidArgumentException wrapper.)
+     *
+     * @return self<TSuccess, TError>
+     * @throws Throwable
+     */
+    public function rethrow(): self
+    {
+        if ($this->ok) {
+            return $this;
+        }
+
+        throw $this->error ?? new InvalidArgumentException('Wrap is in failed state.');
+    }
+
+    /**
+     * Rethrow the "root" error (previous if invalidated, otherwise the captured error).
+     * This is often what you want when invalidation wrapped the real cause as previous.
+     *
+     * @return self<TSuccess, TError>
+     * @throws Throwable
+     */
+    public function rethrowRoot(): self
+    {
+        if ($this->ok) {
+            return $this;
+        }
+
+        $root = $this->rootError($this->error);
+        throw $root ?? new InvalidArgumentException('Wrap is in failed state.');
     }
 }
