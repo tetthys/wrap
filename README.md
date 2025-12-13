@@ -1,271 +1,431 @@
 # Wrap
 
-> A minimal, fluent, **Result-like wrapper** for PHP 8.3+ — featuring safe execution, functional operators (`map`, `filter`, `reduce`), and expressive conditional helpers (`when`, `unless`, `branch`, etc.).
+A minimal, fluent **Result-like wrapper** for PHP 8.3+.  
+Use it to run code safely, compose transformations, attach side-effects, and keep error-handling explicit without nested `try/catch`.
 
----
-
-## 🚀 Installation
+## Installation
 
 ```bash
 composer require tetthys/wrap
-```
+````
 
----
-
-## 💡 Quick Example
+## Quick start
 
 ```php
 use Tetthys\Wrap\Wrap;
 
-$result = Wrap::handle(fn() => riskyOperation())
-    ->ok(fn($v) => \Log::info("Success: {$v}"))
-    ->fail(fn($e) => \Log::error($e->getMessage()))
-    ->rescue(fn() => 42)
-    ->then(fn($v) => $v * 2)
-    ->always(fn($ok, $err, $val) => \Log::debug('Done', compact('ok', 'val')))
-    ->getValueOr(0);
+$value = Wrap::handle(fn() => 10)
+    ->ok(fn($v) => logger()->info("ok:$v"))
+    ->then(fn(int $v) => $v + 5)
+    ->getValueOr(-1);
 
-echo $result; // e.g. 84
+echo $value; // 15
 ```
 
 ---
 
-## 🧩 Core API
+## Construction
 
 ### `Wrap::handle(callable $callback)`
 
-Safely executes a callable and captures either its return value or any thrown `Throwable`.
+Executes `$callback` and captures either the returned value (success) or a thrown `Throwable` (failure).
 
 ```php
-$wrap = Wrap::handle(fn() => 1 / 0);
+$ok = Wrap::handle(fn() => 42);
+
+$fail = Wrap::handle(function () {
+    throw new RuntimeException("boom");
+});
+```
+
+### `Wrap::fromValue(mixed $value)`
+
+Creates a successful wrap.
+
+```php
+$wrap = Wrap::fromValue(["a" => 1]);
+```
+
+### `Wrap::fromError(Throwable $error)`
+
+Creates a failed wrap.
+
+```php
+$wrap = Wrap::fromError(new RuntimeException("x"));
 ```
 
 ---
+
+## Observing state (side-effects)
 
 ### `ok(callable $callback)`
 
-Runs only when successful — typically used for logging or side effects.
+Runs only when the wrap is successful.
 
 ```php
-->ok(fn($v) => \Log::info("Value: {$v}"));
+Wrap::handle(fn() => 10)
+    ->ok(fn($v) => logger()->info("value:$v"));
 ```
-
----
 
 ### `fail(callable $callback)`
 
-Runs only when failed — ideal for alerts or error logs.
+Runs only when the wrap has failed.
 
 ```php
-->fail(fn($e) => \Log::error($e->getMessage()));
+Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->fail(fn($e) => logger()->error($e->getMessage()));
 ```
 
 ---
 
-### `rescue(callable $callback)`
-
-Provides a fallback value **on failure**, flipping the state to *success* so the chain continues.
-
-```php
-->rescue(fn() => 'default value');
-```
-
----
+## Transforming values
 
 ### `then(callable $callback)`
 
-Transforms the stored value when successful (not limited to iterables).
+Transforms the stored value on success.
 
 ```php
-->then(fn($v) => $v + 1);
-```
+$out = Wrap::handle(fn() => 10)
+    ->then(fn(int $x) => $x + 5)
+    ->then(fn(int $x) => (string) ($x * 2))
+    ->getValueOr("fallback");
 
----
+echo $out; // "30"
+```
 
 ### `safeThen(callable $callback)`
 
-Same as `then()`, but catches exceptions and marks the chain as failed instead of throwing.
+Same as `then()`, but if the callback throws, the chain becomes failed (invalidated) instead of throwing.
 
 ```php
-->safeThen(fn($v) => riskyTransform($v));
+$wrap = Wrap::handle(fn() => 1)->safeThen(function () {
+    throw new RuntimeException("explode");
+});
+
+$wrap->isOk();     // false
+$wrap->getError(); // InvalidArgumentException (previous = RuntimeException)
 ```
 
 ---
+
+## Working with iterables
+
+> `map/filter/reduce` require the stored value to be iterable.
+> If it is not iterable, the chain becomes failed (invalidated).
 
 ### `map(callable $mapper)`
 
-Applies a function to each element when the value is iterable.
+Maps over an iterable and re-materializes into an array (keys preserved).
 
 ```php
-->map(fn($v) => $v * 2);
-```
+$out = Wrap::handle(fn() => ["a" => 1, "b" => 2])
+    ->map(fn($v, $k) => $k . $v)
+    ->getValueOr([]);
 
----
+var_export($out); // ["a" => "a1", "b" => "b2"]
+```
 
 ### `safeMap(callable $mapper)`
 
-Like `map()`, but automatically invalidates on exceptions inside the mapper.
-
----
+Like `map()`, but if the mapper throws, the chain is invalidated (previous error preserved).
 
 ### `filter(callable $predicate)`
 
-Filters iterable values by predicate; preserves keys.
+Filters an iterable (keys preserved).
 
 ```php
-->filter(fn($v) => $v > 10);
-```
+$out = Wrap::handle(fn() => ["x" => 1, "y" => 2, "z" => 3, "w" => 4])
+    ->filter(fn($v) => $v % 2 === 0)
+    ->getValueOr([]);
 
----
+var_export($out); // ["y" => 2, "w" => 4]
+```
 
 ### `safeFilter(callable $predicate)`
 
-Variant of `filter()` that invalidates if the predicate throws.
-
----
+Like `filter()`, but if the predicate throws, the chain is invalidated.
 
 ### `reduce(callable $reducer, mixed $initial)`
 
-Reduces an iterable into a single accumulated value.
+Reduces an iterable into a single value.
 
 ```php
-->reduce(fn($acc, $v) => $acc + $v, 0);
-```
+$sum = Wrap::handle(fn() => [1, 2, 3, 4, 5])
+    ->reduce(fn(int $acc, int $v) => $acc + $v, 0)
+    ->getValueOr(-1);
 
----
+echo $sum; // 15
+```
 
 ### `safeReduce(callable $reducer, mixed $initial)`
 
-Catches reducer exceptions and marks the chain as failed.
+Like `reduce()`, but if the reducer throws, the chain is invalidated.
 
 ---
 
-### `always(callable $callback)`
+## Recovery
 
-Always runs, like a `finally` block.
-Receives `(bool $ok, ?Throwable $error, mixed $value)`.
+### `rescue(callable $callback)`
+
+On failure, provides a fallback value, clears the error, flips the state to success, and allows chaining to continue.
 
 ```php
-->always(fn($ok, $err, $val) => \Log::debug('Finished', compact('ok', 'val')));
+$out = Wrap::handle(fn() => throw new RuntimeException("err"))
+    ->rescue(fn() => [1, 2, 3, 4])
+    ->filter(fn($v) => $v % 2 === 0) // [2, 4]
+    ->map(fn($v) => $v * 10)         // [20, 40]
+    ->reduce(fn($acc, $v) => $acc + $v, 0)
+    ->getValueOr(-1);
+
+echo $out; // 60
 ```
 
 ---
 
-### `finally(callable $callback)`
+## Finalizers
 
-Similar to `always()`, but keeps the fluent chain alive; if the callback throws, the chain becomes failed.
+### `always(callable $callback) : void`
+
+Always runs (success or failure). Does **not** continue chaining.
+
+Receives: `(bool $ok, ?Throwable $err, mixed $val)`
 
 ```php
-->finally(fn() => cleanup());
+Wrap::handle(fn() => 10)->always(function (bool $ok, ?Throwable $err, mixed $val) {
+    // $ok=true, $err=null, $val=10
+});
+```
+
+### `finally(callable $callback) : self`
+
+Always runs and **continues chaining**.
+If the callback throws, the chain becomes failed (invalidated).
+
+```php
+$wrap = Wrap::handle(fn() => 5)
+    ->finally(fn(bool $ok, ?Throwable $err, mixed $val) => null)
+    ->then(fn(int $v) => $v + 1);
+
+$wrap->getValue(); // 6
 ```
 
 ---
 
-## ⚙️ Accessors & Extraction
+## Conditional helpers (side-effect oriented)
 
-| Method                                  | Description                                                    | Example                                   |
-| :-------------------------------------- | :------------------------------------------------------------- | :---------------------------------------- |
-| `isOk()`                                | Returns whether the chain succeeded.                           | `if ($wrap->isOk()) echo "OK";`           |
-| `getError()`                            | Returns the captured exception or `null`.                      | `$err = $wrap->getError();`               |
-| `getValue()`                            | Returns the stored value (may be `null`).                      | `$v = $wrap->getValue();`                 |
-| `getValueOr($default)`                  | Returns value or default.                                      | `$v = $wrap->getValueOr(0);`              |
-| `getValueOrCall(fn $factory)`           | Lazy default — calls the function only when needed.            | `$v = $wrap->getValueOrCall(fn() => 99);` |
-| `getValueOrNull()`                      | Returns value on success, otherwise `null`.                    | `$v = $wrap->getValueOrNull();`           |
-| `getOrThrow(?callable $factory = null)` | Returns value or throws (optionally map error via `$factory`). | `$v = $wrap->getOrThrow();`               |
+### `when(callable $predicate, callable $callback)`
 
----
-
-## 🔀 Conditional Helpers
-
-### `when(fn($value): bool, fn($value))`
-
-Runs a callback **only when the predicate returns true**.
+Runs `$callback($value)` only when `$predicate($value)` is true.
 
 ```php
+$log = [];
+
 Wrap::handle(fn() => 10)
-    ->when(fn($v) => $v > 5, fn($v) => echo "✅ Greater than 5");
+    ->when(fn(int $v) => $v > 5, function ($v) use (&$log) {
+        $log[] = "when:$v";
+    });
+
+var_export($log); // ["when:10"]
 ```
+
+### `unless(callable $predicate, callable $callback)`
+
+Runs `$callback($value)` only when `$predicate($value)` is false.
+
+```php
+$log = [];
+
+Wrap::handle(fn() => 3)
+    ->unless(fn(int $v) => $v > 5, function ($v) use (&$log) {
+        $log[] = "unless:$v";
+    });
+
+var_export($log); // ["unless:3"]
+```
+
+### `whenTrue(callable $callback)` / `whenFalse(callable $callback)`
+
+Shortcuts based on `(bool)$value`.
+
+```php
+$log = [];
+
+Wrap::handle(fn() => 123)
+    ->whenTrue(fn() => $log[] = "T")
+    ->whenFalse(fn() => $log[] = "F");
+
+Wrap::handle(fn() => 0)
+    ->whenTrue(fn() => $log[] = "T")
+    ->whenFalse(fn() => $log[] = "F");
+
+var_export($log); // ["T", "F"]
+```
+
+### `branch(callable $onTrue, callable $onFalse)`
+
+If/else style side-effect branching based on `(bool)$value`.
+
+```php
+$log = [];
+
+Wrap::handle(fn() => 1)->branch(
+    fn() => $log[] = "T",
+    fn() => $log[] = "F",
+);
+
+Wrap::handle(fn() => 0)->branch(
+    fn() => $log[] = "T",
+    fn() => $log[] = "F",
+);
+
+var_export($log); // ["T", "F"]
+```
+
+> If a predicate or callback throws inside `when/unless/branch`, the chain is invalidated and the thrown exception is preserved as `previous` (per tests).
 
 ---
 
-### `unless(fn($value): bool, fn($value))`
+## New helpers (based on tests)
 
-Runs a callback **only when the predicate returns false**.
+### `andThen(callable $callback)`
+
+Flat-maps into another `Wrap`. The callback must return a `Wrap`.
+
+```php
+$out = Wrap::handle(fn() => 10)
+    ->andThen(fn(int $v) => Wrap::handle(fn() => $v + 5)) // returns Wrap
+    ->then(fn(int $v) => $v * 2)
+    ->getValueOr(-1);
+
+echo $out; // 30
+```
+
+* If already failed, the callback is not executed.
+* If the callback does not return a `Wrap`, the chain is invalidated.
+* If the returned `Wrap` failed, its error becomes the current error.
+
+### `ensure(callable $predicate, string|callable|null $message = null)`
+
+Asserts a condition on the success value; invalidates the chain if the predicate is false.
+
+```php
+$wrap = Wrap::handle(fn() => 10)
+    ->ensure(fn(int $v) => $v > 5, "too-small");
+
+$wrap->isOk(); // true
+```
+
+Message can be a callable to build a message from the value:
 
 ```php
 Wrap::handle(fn() => 3)
-    ->unless(fn($v) => $v > 5, fn($v) => echo "❌ Less or equal to 5");
+    ->ensure(fn(int $v) => $v > 5, fn(int $v) => "bad:$v");
 ```
 
----
+### `mapError(callable $mapper)`
 
-### `whenTrue(fn($value))`
-
-Boolean-specialized shortcut for truthy values.
+Transforms the captured error (failure state remains failure).
 
 ```php
-Wrap::handle(fn() => true)
-    ->whenTrue(fn() => echo "It's true!");
+$wrap = Wrap::handle(fn() => throw new RuntimeException("orig"))
+    ->mapError(fn(Throwable $e) => new InvalidArgumentException("mapped", 0, $e));
+
+$wrap->getError(); // InvalidArgumentException(previous=RuntimeException)
 ```
 
----
+### `recoverWhen(string|callable $match, callable $fallback)`
 
-### `whenFalse(fn($value))`
+Recovers from failure only when the error matches.
 
-Boolean-specialized shortcut for falsy values.
+* Match by exception class-string:
 
 ```php
-Wrap::handle(fn() => false)
-    ->whenFalse(fn() => echo "It's false!");
+$wrap = Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->recoverWhen(RuntimeException::class, fn() => 99);
+
+$wrap->getValue(); // 99
 ```
 
----
-
-### `branch(fn($onTrue), fn($onFalse))`
-
-Fluent `if / else`-style branching.
+* Or match by predicate:
 
 ```php
-Wrap::handle(fn() => 10 > 5)
-    ->branch(
-        fn() => echo "✅ Enough balance",
-        fn() => echo "❌ Not enough"
-    );
+$wrap = Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->recoverWhen(fn(Throwable $e) => $e->getMessage() === "x", fn() => "ok");
 ```
 
----
+### `tap(callable $callback)` / `tryTap(callable $callback)`
 
-## 💬 Example: Conditional Flow
+Run a side-effect on success without changing the value.
 
 ```php
-Wrap::handle(fn() => 10)
-    ->then(fn(int $v) => $v > 5)
-    ->branch(
-        fn() => echo "✅ Enough balance",
-        fn() => echo "❌ Not enough"
-    );
+$wrap = Wrap::handle(fn() => 5)
+    ->tap(fn(int $v) => logger()->info("seen:$v"));
 ```
 
-Output:
+* `tap()` invalidates the chain if the callback throws.
+* `tryTap()` swallows callback exceptions and keeps the chain OK.
 
+### `failWhen(string|callable $match, callable $callback)`
+
+Runs only when failed and the error matches.
+
+```php
+Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->failWhen(RuntimeException::class, fn(RuntimeException $e) => logger()->error($e->getMessage()));
 ```
-✅ Enough balance
+
+Match can also be a predicate:
+
+```php
+Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->failWhen(fn(Throwable $e) => $e->getMessage() === "x", fn() => /* ... */ null);
+```
+
+### `rethrowWhen(string|callable $match)`
+
+Re-throws the captured error when it matches.
+
+```php
+Wrap::handle(fn() => throw new RuntimeException("x"))
+    ->rethrowWhen(RuntimeException::class); // throws RuntimeException("x")
 ```
 
 ---
 
-## 🪄 Optional Global Helper
+## Accessors / extraction
 
-You can define a global helper `wrap()` for concise syntax.
+```php
+$wrap = Wrap::handle(fn() => 0);
 
-**helpers.php**
+$wrap->isOk();            // bool
+$wrap->getError();        // ?Throwable
+$wrap->getValue();        // mixed
+
+$wrap->getValueOr(999);   // mixed (default if failed OR value is null)
+$wrap->getValueOrCall(fn() => "L"); // lazy default
+$wrap->getValueOrNull();  // mixed|null (null if failed)
+$wrap->getOrThrow();      // mixed (throws captured error on failure)
+```
+
+Error mapping with `getOrThrow()`:
+
+```php
+Wrap::handle(fn() => throw new RuntimeException("boom"))
+    ->getOrThrow(fn($err) => new InvalidArgumentException("wrapped", 0, $err));
+```
+
+---
+
+## Optional global helper
+
+Define a `wrap()` helper as a shortcut for `Wrap::handle()`:
 
 ```php
 <?php
 
 if (!function_exists('wrap')) {
     /**
-     * Shortcut for Wrap::handle()
+     * Shortcut for Wrap::handle().
      *
      * @template TResult
      * @param callable(): TResult $callback
@@ -278,7 +438,7 @@ if (!function_exists('wrap')) {
 }
 ```
 
-**composer.json**
+Enable it via Composer:
 
 ```json
 {
@@ -288,32 +448,12 @@ if (!function_exists('wrap')) {
 }
 ```
 
-Then run:
-
 ```bash
 composer dump-autoload
 ```
 
-Usage:
-
-```php
-$result = wrap(fn() => riskyOperation())
-    ->rescue(fn() => 42)
-    ->getValueOr(0);
-```
-
 ---
 
-## 🧠 Why Use Wrap?
+## License
 
-* ✨ Clean, functional, and chainable syntax
-* 🧱 Zero dependencies (pure PHP)
-* ⚡ Safe and exception-aware
-* 🧩 Fluent conditional flow (`when`, `unless`, `branch`)
-* 🧰 Optional global helper (`wrap()`)
-
----
-
-## 📜 License
-
-**MIT © Tetthys**
+MIT © Tetthys
