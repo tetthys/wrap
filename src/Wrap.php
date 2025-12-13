@@ -1286,4 +1286,285 @@ final class Wrap
         $root = $this->rootError($this->error);
         throw $root ?? new InvalidArgumentException('Wrap is in failed state.');
     }
+
+    /**
+     * Alias of tap(): side-effect only, invalidates if callback throws.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tee(callable $callback): self
+    {
+        return $this->tap($callback);
+    }
+
+    /**
+     * Alias of tryTap(): side-effect only, swallows callback exceptions.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tryTee(callable $callback): self
+    {
+        return $this->tryTap($callback);
+    }
+
+    /**
+     * Transform value on success. Exceptions are NOT caught (escape Wrap boundary).
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TNext, TError>
+     * @throws Throwable
+     */
+    public function pipe(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        /** @var self<TNext, TError> $this */
+        $this->value = $callback($this->value);
+        return $this;
+    }
+
+    /**
+     * Safe transform: invalidates if callback throws.
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TNext, TError>
+     */
+    public function safePipe(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            /** @var self<TNext, TError> $this */
+            $this->value = $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in safePipe(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Try transform: swallows exceptions and keeps original value.
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TSuccess|TNext, TError>
+     */
+    public function tryPipe(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            /** @var self<TSuccess|TNext, TError> $this */
+            $this->value = $callback($this->value);
+        } catch (Throwable) {
+            // intentionally ignored; keep original value
+        }
+
+        return $this;
+    }
+
+    /**
+     * Side-effect + transform in one step; invalidates if callback throws.
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TNext, TError>
+     */
+    public function tapThen(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            /** @var self<TNext, TError> $this */
+            $this->value = $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in tapThen(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Try variant of tapThen(): swallows exceptions and keeps original value.
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TSuccess|TNext, TError>
+     */
+    public function tryTapThen(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            /** @var self<TSuccess|TNext, TError> $this */
+            $this->value = $callback($this->value);
+        } catch (Throwable) {
+            // intentionally ignored; keep original value
+        }
+
+        return $this;
+    }
+
+    /**
+     * Terminal fold: returns a raw value.
+     *
+     * - ok  => onOk(value)
+     * - fail => onFail(error)
+     *
+     * Exceptions from handlers are not caught (escape boundary).
+     *
+     * @template TResult
+     * @param callable(TSuccess): TResult $onOk
+     * @param callable(?Throwable): TResult $onFail
+     * @return TResult
+     * @throws Throwable
+     */
+    public function fold(callable $onOk, callable $onFail): mixed
+    {
+        if ($this->ok) {
+            return $onOk($this->value);
+        }
+
+        return $onFail($this->error);
+    }
+
+    /**
+     * Non-terminal fold: returns a Wrap to continue chaining.
+     *
+     * - ok  => onOk(value) must return Wrap
+     * - fail => onFail(error) must return Wrap
+     *
+     * If handler returns non-Wrap, invalidates.
+     * If handler throws, invalidates (previous preserved).
+     *
+     * @template TNext
+     * @param callable(TSuccess): self<TNext, Throwable> $onOk
+     * @param callable(?Throwable): self<TNext, Throwable> $onFail
+     * @return self<TNext, Throwable>
+     */
+    public function foldWrap(callable $onOk, callable $onFail): self
+    {
+        try {
+            $next = $this->ok
+                ? $onOk($this->value)
+                : $onFail($this->error);
+
+            if (!$next instanceof self) {
+                return $this->invalidate('foldWrap() handlers must return an instance of Wrap');
+            }
+
+            $this->ok = $next->ok;
+            $this->error = $next->error;
+            $this->value = $next->value;
+
+            /** @var self<TNext, Throwable> $this */
+            return $this;
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in foldWrap(): {$e->getMessage()}",
+                $e,
+            );
+        }
+    }
+
+    /**
+     * Match and handle the captured error in one place.
+     *
+     * Handler return contract:
+     * - return Wrap      => replace whole chain state
+     * - return Throwable => replace current error (still failed)
+     * - return other     => rescue with that value (ok=true, error=null)
+     * - handler may throw => escapes Wrap boundary (rethrow behavior)
+     *
+     * @param array<int, array{0: string|callable, 1: callable}> $cases
+     * @param null|callable(Throwable): mixed $default
+     * @return self
+     * @throws Throwable
+     */
+    public function matchError(array $cases, ?callable $default = null): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        $err = $this->error;
+
+        foreach ($cases as $case) {
+            [$when, $handler] = $case;
+
+            $matched = is_string($when)
+                ? $err instanceof $when
+                : (bool) $when($err);
+
+            if (!$matched) {
+                continue;
+            }
+
+            $out = $handler($err);
+
+            if ($out instanceof self) {
+                $this->ok = $out->ok;
+                $this->error = $out->error;
+                $this->value = $out->value;
+                return $this;
+            }
+
+            if ($out instanceof Throwable) {
+                $this->ok = false;
+                $this->error = $out;
+                $this->value = null;
+                return $this;
+            }
+
+            $this->ok = true;
+            $this->error = null;
+            $this->value = $out;
+            return $this;
+        }
+
+        if ($default) {
+            $out = $default($err);
+
+            if ($out instanceof self) {
+                $this->ok = $out->ok;
+                $this->error = $out->error;
+                $this->value = $out->value;
+                return $this;
+            }
+
+            if ($out instanceof Throwable) {
+                $this->ok = false;
+                $this->error = $out;
+                $this->value = null;
+                return $this;
+            }
+
+            $this->ok = true;
+            $this->error = null;
+            $this->value = $out;
+        }
+
+        return $this;
+    }
 }
