@@ -8,6 +8,12 @@ use InvalidArgumentException;
 use RuntimeException;
 
 /**
+ * Concrete exception used only for Wrap tests.
+ */
+final class ConcreteTestException extends RuntimeException {}
+final class AnotherTestException extends RuntimeException {}
+
+/**
  * Pest setup
  */
 uses()->group("unit");
@@ -1239,5 +1245,110 @@ describe("tapError() and tryTapError()", function () {
         expect($called)->toBeFalse()
             ->and($wrap->isOk())->toBeTrue()
             ->and($wrap->getValue())->toBe(1);
+    });
+});
+
+describe('rescueExcept() with concrete exceptions', function () {
+    it('rescues when error is not in except list', function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException('generic');
+        })->rescueExcept(ConcreteTestException::class, fn() => 123);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(123)
+            ->and($wrap->getError())->toBeNull();
+    });
+
+    it('rethrows when error matches except (single)', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('boom');
+            })->rescueExcept(ConcreteTestException::class, fn() => 123);
+        })->toThrow(ConcreteTestException::class);
+    });
+
+    it('rethrows when error matches except (array)', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('boom');
+            })->rescueExcept(
+                [ConcreteTestException::class, AnotherTestException::class],
+                fn() => 123,
+            );
+        })->toThrow(ConcreteTestException::class);
+    });
+
+    it('rethrows when error matches except (varargs)', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('boom');
+            })->rescueExcept(
+                ConcreteTestException::class,
+                AnotherTestException::class,
+                fn() => 123,
+            );
+        })->toThrow(ConcreteTestException::class);
+    });
+
+    it('detects wrapped previous error (invalidated case)', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('root');
+            })
+                // any operation that causes invalidation and wraps previous
+                ->safeThen(function () {
+                    throw new RuntimeException('later');
+                })
+                ->rescueExcept(ConcreteTestException::class, fn() => 123);
+        })->toThrow(ConcreteTestException::class);
+    });
+});
+
+describe('rescueWhen() with concrete exceptions', function () {
+    it('rescues when predicate returns true', function () {
+        $wrap = Wrap::handle(function () {
+            throw new ConcreteTestException('boom');
+        })->rescueWhen(
+            fn(Throwable $e) => $e instanceof ConcreteTestException,
+            fn() => 777,
+        );
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(777)
+            ->and($wrap->getError())->toBeNull();
+    });
+
+    it('rethrows when predicate returns false', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('boom');
+            })->rescueWhen(
+                fn(Throwable $e) => !($e instanceof ConcreteTestException),
+                fn() => 777,
+            );
+        })->toThrow(ConcreteTestException::class);
+    });
+
+    it('uses previous error when invalidated wraps original', function () {
+        expect(function () {
+            Wrap::handle(function () {
+                throw new ConcreteTestException('root');
+            })
+                ->safeThen(function () {
+                    throw new RuntimeException('later');
+                })
+                ->rescueWhen(
+                    fn(Throwable $e) => !($e instanceof ConcreteTestException),
+                    fn() => 777,
+                );
+        })->toThrow(ConcreteTestException::class);
+    });
+
+    it('does nothing on success', function () {
+        $wrap = Wrap::handle(fn() => 10)
+            ->rescueWhen(fn() => true, fn() => 999);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(10);
     });
 });

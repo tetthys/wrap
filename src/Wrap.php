@@ -1007,4 +1007,102 @@ final class Wrap
 
         return $this;
     }
+
+    /**
+     * Pick the "root" error for decision making.
+     * If invalidation wraps the original error as previous, use it.
+     */
+    private function rootError(?Throwable $err): ?Throwable
+    {
+        if ($err === null) {
+            return null;
+        }
+        return $err->getPrevious() ?? $err;
+    }
+
+    /**
+     * Rescue failures, but rethrow given exception types.
+     *
+     * Supports:
+     *  - rescueExcept(FooException::class, fn() => ...)
+     *  - rescueExcept([FooException::class, BarException::class], fn() => ...)
+     *  - rescueExcept(FooException::class, BarException::class, fn() => ...)
+     *
+     * @template T
+     * @param class-string<Throwable>|array<class-string<Throwable>> ...$exceptOrArray
+     * @param callable(Throwable):T|callable():T $fallback
+     * @return self
+     */
+    public function rescueExcept(...$args): self
+    {
+        // args: (except..., fallback)
+        if (count($args) < 2) {
+            throw new \InvalidArgumentException('rescueExcept() requires at least 2 arguments: except(s), fallback');
+        }
+
+        $fallback = array_pop($args);
+        if (!is_callable($fallback)) {
+            throw new \InvalidArgumentException('rescueExcept() last argument must be a callable fallback');
+        }
+
+        // Flatten excepts:
+        // rescueExcept([A,B], fn) -> $args = [[A,B]]
+        // rescueExcept(A, B, fn) -> $args = [A,B]
+        $except = [];
+        foreach ($args as $x) {
+            if (is_array($x)) {
+                foreach ($x as $y) {
+                    $except[] = $y;
+                }
+            } else {
+                $except[] = $x;
+            }
+        }
+
+        // Success -> no-op
+        if ($this->isOk()) {
+            return $this;
+        }
+
+        $root = $this->rootError($this->getError());
+        if ($root === null) {
+            // Defensive: failed state without an error
+            return $this->rescue($fallback);
+        }
+
+        foreach ($except as $class) {
+            if (is_string($class) && $root instanceof $class) {
+                throw $root;
+            }
+        }
+
+        return $this->rescue($fallback);
+    }
+
+    /**
+     * Rescue failures only when predicate matches the captured error.
+     * If predicate returns false, the (root) error is rethrown.
+     *
+     * @template T
+     * @param callable(Throwable):bool $predicate
+     * @param callable(Throwable):T|callable():T $fallback
+     * @return self
+     */
+    public function rescueWhen(callable $predicate, callable $fallback): self
+    {
+        if ($this->isOk()) {
+            return $this;
+        }
+
+        $root = $this->rootError($this->getError());
+        if ($root === null) {
+            return $this->rescue($fallback);
+        }
+
+        if (!$predicate($root)) {
+            throw $root;
+        }
+
+        return $this->rescue($fallback);
+    }
 }
