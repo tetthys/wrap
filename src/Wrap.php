@@ -846,4 +846,165 @@ final class Wrap
 
         return $this;
     }
+
+    /**
+     * Keep the current value only if predicate returns true.
+     * If predicate returns false, the value becomes null (success state).
+     *
+     * This is useful for optional pipelines:
+     *   Wrap::handle(...)->keep(fn($v) => $v !== null)->then(...)
+     *
+     * Note: This does NOT fail the chain; it just turns the value into null.
+     *
+     * @param callable(TSuccess): bool $predicate
+     * @return self<TSuccess|null, TError>
+     */
+    public function keep(callable $predicate): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        if (!$predicate($this->value)) {
+            $this->value = null;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Safe variant of keep(): invalidates if predicate throws.
+     *
+     * @param callable(TSuccess): bool $predicate
+     * @return self<TSuccess|null, TError>
+     */
+    public function safeKeep(callable $predicate): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        try {
+            if (!$predicate($this->value)) {
+                $this->value = null;
+            }
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in safeKeep(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Runs callback only when current value is not null (success state).
+     * Does not modify the stored value.
+     *
+     * @param callable(TSuccess): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function whenValue(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        if ($this->value === null) {
+            return $this;
+        }
+
+        try {
+            $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in whenValue(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Transforms the value only when current value is not null (success state).
+     * If value is null, keeps it null.
+     *
+     * @template TNext
+     * @param callable(TSuccess): TNext $callback
+     * @return self<TNext|null, TError>
+     */
+    public function whenValueThen(callable $callback): self
+    {
+        if (!$this->ok) {
+            return $this;
+        }
+
+        if ($this->value === null) {
+            /** @var self<TNext|null, TError> $this */
+            return $this;
+        }
+
+        try {
+            /** @var self<TNext|null, TError> $this */
+            $this->value = $callback($this->value);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in whenValueThen(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Runs callback on failure; if callback throws, invalidates with previous preserved.
+     *
+     * @param callable(TError): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tapError(callable $callback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        try {
+            /** @var TError $err */
+            $err = $this->error;
+            $callback($err);
+        } catch (Throwable $e) {
+            return $this->invalidate(
+                "Exception in tapError(): {$e->getMessage()}",
+                $e,
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Runs callback on failure; swallows callback exceptions.
+     *
+     * @param callable(TError): void $callback
+     * @return self<TSuccess, TError>
+     */
+    public function tryTapError(callable $callback): self
+    {
+        if ($this->ok || !$this->error) {
+            return $this;
+        }
+
+        try {
+            /** @var TError $err */
+            $err = $this->error;
+            $callback($err);
+        } catch (Throwable $e) {
+            // swallow
+        }
+
+        return $this;
+    }
 }

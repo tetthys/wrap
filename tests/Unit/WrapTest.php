@@ -1064,3 +1064,180 @@ describe("rethrowWhen()", function () {
         expect($wrap->isOk())->toBeTrue()->and($wrap->getValue())->toBe(1);
     });
 });
+
+/**
+ * --------------------------------------------------------------------------
+ * New helpers: keep() / safeKeep()
+ * --------------------------------------------------------------------------
+ */
+describe("keep() and safeKeep()", function () {
+    it("keep() keeps value when predicate is true", function () {
+        $wrap = Wrap::handle(fn() => 10)->keep(fn(int $v) => $v > 5);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(10);
+    });
+
+    it("keep() turns value into null when predicate is false (still ok)", function () {
+        $wrap = Wrap::handle(fn() => 3)->keep(fn(int $v) => $v > 5);
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBeNull();
+    });
+
+    it("keep() does nothing when already failed", function () {
+        $called = false;
+
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("x");
+        })->keep(function () use (&$called) {
+            $called = true;
+            return true;
+        });
+
+        expect($called)->toBeFalse()
+            ->and($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(RuntimeException::class);
+    });
+
+    it("safeKeep() invalidates when predicate throws (previous preserved)", function () {
+        $wrap = Wrap::handle(fn() => 1)->safeKeep(function () {
+            throw new RuntimeException("pred-boom");
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class);
+    });
+});
+
+
+/**
+ * --------------------------------------------------------------------------
+ * New helpers: whenValue() / whenValueThen()
+ * --------------------------------------------------------------------------
+ */
+describe("whenValue() and whenValueThen()", function () {
+    it("whenValue() runs only when value is not null", function () {
+        $seen = null;
+
+        Wrap::handle(fn() => 5)->whenValue(function (int $v) use (&$seen) {
+            $seen = $v;
+        });
+
+        Wrap::handle(fn() => null)->whenValue(function () use (&$seen) {
+            $seen = "should-not-run";
+        });
+
+        expect($seen)->toBe(5);
+    });
+
+    it("whenValue() invalidates when callback throws (previous preserved)", function () {
+        $wrap = Wrap::handle(fn() => 1)->whenValue(function () {
+            throw new RuntimeException("boom");
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class);
+    });
+
+    it("whenValueThen() transforms when value is not null", function () {
+        $out = Wrap::handle(fn() => 10)
+            ->whenValueThen(fn(int $v) => $v + 5)
+            ->getValueOr(-1);
+
+        expect($out)->toBe(15);
+    });
+
+    it("whenValueThen() keeps null when value is null", function () {
+        $wrap = Wrap::handle(fn() => null)
+            ->whenValueThen(function () {
+                throw new RuntimeException("should-not-run");
+            });
+
+        expect($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBeNull();
+    });
+
+    it("whenValueThen() invalidates when callback throws (previous preserved)", function () {
+        $wrap = Wrap::handle(fn() => 1)->whenValueThen(function () {
+            throw new RuntimeException("boom");
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class);
+    });
+});
+
+
+/**
+ * --------------------------------------------------------------------------
+ * New helpers: tapError() / tryTapError()
+ * --------------------------------------------------------------------------
+ */
+describe("tapError() and tryTapError()", function () {
+    it("tapError() runs only on failure and does not change the error", function () {
+        $seen = null;
+
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("x");
+        })->tapError(function (RuntimeException $e) use (&$seen) {
+            $seen = $e->getMessage();
+        });
+
+        expect($seen)->toBe("x")
+            ->and($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getMessage())->toBe("x");
+    });
+
+    it("tapError() does nothing on success", function () {
+        $called = false;
+
+        $wrap = Wrap::handle(fn() => 1)->tapError(function () use (&$called) {
+            $called = true;
+        });
+
+        expect($called)->toBeFalse()
+            ->and($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(1);
+    });
+
+    it("tapError() invalidates if callback throws (previous preserved)", function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("orig");
+        })->tapError(function () {
+            throw new RuntimeException("tapError-boom");
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(InvalidArgumentException::class)
+            ->and($wrap->getError()?->getPrevious())->toBeInstanceOf(RuntimeException::class);
+    });
+
+    it("tryTapError() swallows callback exceptions and keeps original error", function () {
+        $wrap = Wrap::handle(function () {
+            throw new RuntimeException("orig");
+        })->tryTapError(function () {
+            throw new RuntimeException("ignored");
+        });
+
+        expect($wrap->isOk())->toBeFalse()
+            ->and($wrap->getError())->toBeInstanceOf(RuntimeException::class)
+            ->and($wrap->getError()?->getMessage())->toBe("orig");
+    });
+
+    it("tryTapError() does nothing on success", function () {
+        $called = false;
+
+        $wrap = Wrap::handle(fn() => 1)->tryTapError(function () use (&$called) {
+            $called = true;
+        });
+
+        expect($called)->toBeFalse()
+            ->and($wrap->isOk())->toBeTrue()
+            ->and($wrap->getValue())->toBe(1);
+    });
+});
